@@ -1,0 +1,78 @@
+﻿@page "/auth/user"
+@using Microsoft.AspNetCore.WebUtilities
+@inject ILookupService Lookups
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>Выбор пользователя</h3>
+
+@if (!string.IsNullOrWhiteSpace(Error))
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:12px;">
+        @Error
+    </div>
+}
+
+@if (Users.Count == 0)
+{
+    <div>Нет пользователей. Проверь seed-данные.</div>
+}
+else
+{
+    <div style="display:flex; flex-direction:column; gap:12px; max-width:420px;">
+        <label>Пользователь</label>
+        <select @bind="SelectedUserId" style="padding:8px; border-radius:6px; border:1px solid #aaa;">
+            <option value="">-- выбери --</option>
+            @foreach (var u in Users)
+            {
+                <option value="@u.Id">@u.DisplayName (@u.Role)</option>
+            }
+        </select>
+
+        <button type="button" @onclick="Select" style="padding:8px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Продолжить
+        </button>
+    </div>
+}
+
+@code {
+    private List<UserDto> Users { get; set; } = new();
+    private Guid? SelectedUserId { get; set; }
+    private string? Error { get; set; }
+    private string _returnUrl = "/production-days";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Users = (await Lookups.GetUsersAsync()).ToList();
+
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var q = QueryHelpers.ParseQuery(uri.Query);
+        if (q.TryGetValue("returnUrl", out var rv))
+        {
+            var s = rv.ToString();
+            if (!string.IsNullOrWhiteSpace(s) && s.StartsWith("/"))
+                _returnUrl = s;
+        }
+    }
+
+    private void Select()
+    {
+        Error = null;
+
+        if (!SelectedUserId.HasValue)
+        {
+            Error = "Выбери пользователя.";
+            return;
+        }
+
+        var user = Users.FirstOrDefault(x => x.Id == SelectedUserId.Value);
+        if (user == null)
+        {
+            Error = "Пользователь не найден.";
+            return;
+        }
+
+        CurrentUser.Set(user.Id, user.DisplayName, user.Role);
+        Nav.NavigateTo(_returnUrl);
+    }
+}

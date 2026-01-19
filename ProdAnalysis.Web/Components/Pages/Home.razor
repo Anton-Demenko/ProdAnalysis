@@ -1,0 +1,27 @@
+﻿@page "/"
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>ProdAnalysis MVP</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="margin-top:12px;">
+        <button type="button" @onclick="GoLogin" style="padding:8px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Выбрать пользователя
+        </button>
+    </div>
+}
+else
+{
+    <div style="margin-top:12px;">
+        <a href="/production-days">Перейти к сменам</a>
+    </div>
+}
+
+@code {
+    private void GoLogin()
+    {
+        Nav.NavigateTo("/auth/user");
+    }
+}

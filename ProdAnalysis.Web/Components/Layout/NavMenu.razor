@@ -1,0 +1,49 @@
+﻿@implements IDisposable
+@inject CurrentUserService CurrentUser
+
+<div style="display:flex; flex-direction:column; gap:10px;">
+    <NavLink href="/" Match="NavLinkMatch.All" style="text-decoration:none; font-weight:700;">Главная</NavLink>
+    <NavLink href="/auth/user" style="text-decoration:none;">Пользователь</NavLink>
+
+    @if (CurrentUser.IsSet)
+    {
+        <div style="margin-top:10px; font-weight:700;">Смены</div>
+        <NavLink href="/production-days" style="text-decoration:none;">Список смен</NavLink>
+
+        @if (CurrentUser.Role == UserRole.Operator || CurrentUser.Role == UserRole.Admin)
+        {
+            <NavLink href="/production-days/create" style="text-decoration:none;">Создать смену</NavLink>
+        }
+
+        <div style="margin-top:10px; font-weight:700;">Отчёты</div>
+        <NavLink href="/reports/summary" style="text-decoration:none;">Сводка (план/факт)</NavLink>
+        <NavLink href="/reports/pareto" style="text-decoration:none;">Pareto (простои)</NavLink>
+
+        @if (CurrentUser.Role == UserRole.Master || CurrentUser.Role == UserRole.Manager || CurrentUser.Role == UserRole.Admin)
+        {
+            <div style="margin-top:10px; font-weight:700;">Отклонения</div>
+            <NavLink href="/deviations" style="text-decoration:none;">Дашборд</NavLink>
+        }
+    }
+    else
+    {
+        <div style="margin-top:10px; color:#666;">Сначала выбери пользователя</div>
+    }
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        CurrentUser.Changed += OnChanged;
+    }
+
+    private void OnChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        CurrentUser.Changed -= OnChanged;
+    }
+}

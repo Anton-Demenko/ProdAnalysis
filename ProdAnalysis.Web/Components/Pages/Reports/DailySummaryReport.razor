@@ -1,0 +1,235 @@
+﻿@page "/reports/summary"
+
+@using ProdAnalysis.Application.Dtos.Reports
+@using ProdAnalysis.Application.Dtos.Lookups
+@using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Web.Services
+
+@inject IReportService Reports
+@inject ILookupService Lookups
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>Summary report (Plan/Fact by shifts)</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Select user first.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Go</button>
+    </div>
+}
+else
+{
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-bottom:14px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Date from</label>
+            <InputDate TValue="DateTime" @bind-Value="DateFrom" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Date to</label>
+            <InputDate TValue="DateTime" @bind-Value="DateTo" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>WorkCenter</label>
+            <select @bind="WorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:220px;">
+                <option value="">All</option>
+                @foreach (var wc in WorkCenters)
+                {
+                    <option value="@wc.Id">@wc.Name</option>
+                }
+            </select>
+        </div>
+
+        <button type="button" @onclick="Load" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Load
+        </button>
+
+        <button type="button" @onclick="DownloadCsv" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Download CSV
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:12px;">
+            @Error
+        </div>
+    }
+
+    @if (Items.Count == 0)
+    {
+        <div>No data for selected range.</div>
+    }
+    else
+    {
+        var totalPlan = Items.Sum(x => x.PlanShift);
+        var totalActual = Items.Sum(x => x.ActualShift);
+        var totalDev = Items.Sum(x => x.DeviationShift);
+        var totalDt = Items.Sum(x => x.DowntimeMinutes);
+        var totalOpen = Items.Sum(x => x.DeviationEventsOpen);
+        var totalEv = Items.Sum(x => x.DeviationEventsTotal);
+
+        <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+            <div style="padding:10px; border:1px solid #ddd; border-radius:8px;">
+                <div style="color:#666;">Plan</div>
+                <div style="font-weight:700;">@totalPlan</div>
+            </div>
+            <div style="padding:10px; border:1px solid #ddd; border-radius:8px;">
+                <div style="color:#666;">Actual</div>
+                <div style="font-weight:700;">@totalActual</div>
+            </div>
+            <div style="padding:10px; border:1px solid #ddd; border-radius:8px;">
+                <div style="color:#666;">Deviation</div>
+                <div style="font-weight:700; @(totalDev < 0 ? "color:#b00;" : "")">@totalDev</div>
+            </div>
+            <div style="padding:10px; border:1px solid #ddd; border-radius:8px;">
+                <div style="color:#666;">Downtime, min</div>
+                <div style="font-weight:700;">@totalDt</div>
+            </div>
+            <div style="padding:10px; border:1px solid #ddd; border-radius:8px;">
+                <div style="color:#666;">Deviation events (open/total)</div>
+                <div style="font-weight:700; @(totalOpen > 0 ? "color:#b00;" : "")">@totalOpen / @totalEv</div>
+            </div>
+        </div>
+
+        <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f6f6f6;">
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Date</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">WorkCenter</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Product</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Takt, sec</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Plan</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Actual</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Deviation</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Downtime, min</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Events open</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Max level</th>
+                        <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var it in Items)
+                    {
+                        var devStyle = it.DeviationShift < 0 ? "color:#b00; font-weight:700;" : "";
+                        var openStyle = it.DeviationEventsOpen > 0 ? "color:#b00; font-weight:700;" : "";
+                        var dtStyle = it.DowntimeMinutes > 0 ? "font-weight:700;" : "";
+
+                        <tr>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.Date.ToString("yyyy-MM-dd")</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.WorkCenter</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.Product</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.TaktSec</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.PlanShift</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.ActualShift</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@it.DeviationShift</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @dtStyle">@it.DowntimeMinutes</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @openStyle">@it.DeviationEventsOpen</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.MaxEscalationLevel</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
+                                <a href="@($"/production-days/{it.ProductionDayId}")" style="text-decoration:none;">Open</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private List<WorkCenterDto> WorkCenters { get; set; } = new();
+    private List<DailySummaryItemDto> Items { get; set; } = new();
+    private string? Error { get; set; }
+
+    private DateTime DateFrom { get; set; } = DateTime.Today.AddDays(-6);
+    private DateTime DateTo { get; set; } = DateTime.Today;
+
+    private string? WorkCenterIdText { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
+    }
+
+    private void GoLogin()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+        var target = string.IsNullOrWhiteSpace(rel) ? "/" : "/" + rel;
+        Nav.NavigateTo($"/auth/user?returnUrl={Uri.EscapeDataString(target)}");
+    }
+
+    private void Load()
+    {
+        _ = LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        Error = null;
+
+        try
+        {
+            Guid? wcId = null;
+            if (!string.IsNullOrWhiteSpace(WorkCenterIdText))
+            {
+                if (Guid.TryParse(WorkCenterIdText, out var wc))
+                    wcId = wc;
+                else
+                {
+                    Error = "Invalid WorkCenterId.";
+                    Items = new List<DailySummaryItemDto>();
+                    StateHasChanged();
+                    return;
+                }
+            }
+
+            var from = DateOnly.FromDateTime(DateFrom);
+            var to = DateOnly.FromDateTime(DateTo);
+
+            Items = (await Reports.GetDailySummaryAsync(from, to, wcId)).ToList();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private void DownloadCsv()
+    {
+        Error = null;
+
+        Guid? wcId = null;
+        if (!string.IsNullOrWhiteSpace(WorkCenterIdText))
+        {
+            if (Guid.TryParse(WorkCenterIdText, out var wc))
+                wcId = wc;
+            else
+            {
+                Error = "Invalid WorkCenterId.";
+                return;
+            }
+        }
+
+        var from = DateOnly.FromDateTime(DateFrom);
+        var to = DateOnly.FromDateTime(DateTo);
+
+        var qs = new List<string>
+        {
+            $"from={Uri.EscapeDataString(from.ToString("yyyy-MM-dd"))}",
+            $"to={Uri.EscapeDataString(to.ToString("yyyy-MM-dd"))}"
+        };
+
+        if (wcId.HasValue)
+            qs.Add($"workCenterId={Uri.EscapeDataString(wcId.Value.ToString())}");
+
+        var url = "/api/csv/export/daily-summary?" + string.Join("&", qs);
+        Nav.NavigateTo(url, forceLoad: true);
+    }
+}

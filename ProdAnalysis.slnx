@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="ProdAnalysis.Application/ProdAnalysis.Application.csproj" />
+  <Project Path="ProdAnalysis.Domain/ProdAnalysis.Domain.csproj" />
+  <Project Path="ProdAnalysis.Infrastructure/ProdAnalysis.Infrastructure.csproj" />
+  <Project Path="ProdAnalysis.Web/ProdAnalysis.Web.csproj" />
+</Solution>

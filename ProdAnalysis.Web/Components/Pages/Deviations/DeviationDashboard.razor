@@ -1,0 +1,163 @@
+﻿@page "/deviations"
+
+@using ProdAnalysis.Application.Dtos.Deviations
+@using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Application.Dtos.Lookups
+@using ProdAnalysis.Web.Services
+@using ProdAnalysis.Domain.Enums
+
+@inject IDeviationEventService Deviations
+@inject ILookupService Lookups
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>Deviations dashboard</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Select user first.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Go</button>
+    </div>
+}
+else if (CurrentUser.Role != UserRole.Master && CurrentUser.Role != UserRole.Manager && CurrentUser.Role != UserRole.Admin)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Access denied.
+    </div>
+}
+else
+{
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-bottom:14px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Date</label>
+            <InputDate TValue="DateTime" @bind-Value="Date" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>WorkCenter</label>
+            <select @bind="WorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:220px;">
+                <option value="">All</option>
+                @foreach (var wc in WorkCenters)
+                {
+                    <option value="@wc.Id">@wc.Name</option>
+                }
+            </select>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:8px; padding-bottom:4px;">
+            <input type="checkbox" @bind="IncludeClosed" />
+            <label style="margin:0;">Show closed</label>
+        </div>
+
+        <button type="button" @onclick="Load" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Load
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:12px;">
+            @Error
+        </div>
+    }
+
+    @if (Items.Count == 0)
+    {
+        <div>No deviations.</div>
+    }
+    else
+    {
+        <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f6f6f6;">
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">When</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">WorkCenter</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Product</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Plan</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Actual</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Dev</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Status</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Age, min</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Level</th>
+                        <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var it in Items)
+                    {
+                        var rowStyle = it.CurrentEscalationLevel >= 2 ? "background:#fff3cd;" : "";
+                        var devStyle = "color:#b00; font-weight:700;";
+
+                        <tr style="@rowStyle">
+                            <td style="padding:10px; border-bottom:1px solid #eee;">
+                                @it.ProductionDate.ToString("yyyy-MM-dd") @it.HourStart.ToString("HH:mm")
+                            </td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.WorkCenterName</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.ProductName</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.PlanQty</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.ActualQty</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@it.DeviationQty</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.Status</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.AgeMinutes</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">L@it.CurrentEscalationLevel</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
+                                <NavLink href="@($"/deviations/{it.Id}")" style="text-decoration:none;">Open</NavLink>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private List<WorkCenterDto> WorkCenters { get; set; } = new();
+    private List<DeviationEventListItemDto> Items { get; set; } = new();
+    private string? Error { get; set; }
+
+    private DateTime Date { get; set; } = DateTime.Today;
+    private string? WorkCenterIdText { get; set; }
+    private bool IncludeClosed { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
+        await LoadAsync();
+    }
+
+    private void GoLogin()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+        var target = string.IsNullOrWhiteSpace(rel) ? "/" : "/" + rel;
+        Nav.NavigateTo($"/auth/user?returnUrl={Uri.EscapeDataString(target)}");
+    }
+
+    private void Load()
+    {
+        _ = LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        Error = null;
+
+        try
+        {
+            Guid? wcId = null;
+            if (!string.IsNullOrWhiteSpace(WorkCenterIdText) && Guid.TryParse(WorkCenterIdText, out var wc))
+                wcId = wc;
+
+            var dateOnly = DateOnly.FromDateTime(Date);
+            Items = (await Deviations.ListAsync(dateOnly, wcId, IncludeClosed)).ToList();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+}

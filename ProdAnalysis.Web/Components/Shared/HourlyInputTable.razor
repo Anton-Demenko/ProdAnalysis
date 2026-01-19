@@ -1,0 +1,227 @@
+﻿@using ProdAnalysis.Application.Dtos.Hourly
+@using ProdAnalysis.Application.Dtos.ProductionDays
+@using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Web.Services
+
+@inject IHourlyRecordService HourlyRecords
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+@if (Details == null)
+{
+    <div></div>
+}
+else
+{
+    var productionDayId = TryGetProductionDayId(Details);
+
+    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin-bottom:10px;">
+        <div style="font-weight:700;">Hourly input</div>
+
+        <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+            @if (productionDayId.HasValue)
+            {
+                <button type="button" @onclick="() => DownloadProductionDayCsv(productionDayId.Value)"
+                        style="padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;">
+                    Export CSV
+                </button>
+
+                <button type="button" @onclick="() => OpenCsvTools(productionDayId.Value)"
+                        style="padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;">
+                    CSV import/export
+                </button>
+            }
+            else
+            {
+                <div style="color:#666;">CSV: ProductionDayId not found in Details.</div>
+            }
+        </div>
+    </div>
+
+    <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
+        <table style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="background:#f6f6f6;">
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Hour</th>
+                    <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Plan</th>
+                    <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Actual</th>
+                    <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Downtime, min</th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Comment</th>
+                    <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Cum dev</th>
+                    <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in Details.HourlyRecords.OrderBy(x => x.HourIndex))
+                {
+                    var edit = GetOrCreate(r);
+                    var rowStyle = r.HasDeviationThisHour ? "background:#ffecec;" : "";
+                    var devStyle = r.CumDeviationAfterThisHour < 0 ? "color:#b00; font-weight:700;" : "";
+                    var dtStyle = r.DowntimeMinutes > 0 ? "font-weight:700;" : "";
+
+                    <tr style="@rowStyle">
+                        <td style="padding:10px; border-bottom:1px solid #eee;">
+                            @r.HourStart.ToString("HH:mm") - @r.HourStart.AddHours(1).ToString("HH:mm")
+                        </td>
+                        <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.PlanQty</td>
+                        <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
+                            <input type="number" @bind="edit.ActualText" style="width:100px; padding:6px 8px; border:1px solid #aaa; border-radius:6px; text-align:right;" />
+                        </td>
+                        <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @dtStyle">
+                            @r.DowntimeMinutes
+                        </td>
+                        <td style="padding:10px; border-bottom:1px solid #eee;">
+                            <input type="text" @bind="edit.Comment" style="width:100%; min-width:220px; padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+                        </td>
+                        <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@r.CumDeviationAfterThisHour</td>
+                        <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">
+                            <button type="button" @onclick="() => SaveActual(r.Id)" style="padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;">
+                                Save
+                            </button>
+                            <button type="button" @onclick="() => ToggleDowntime(r.Id)" style="margin-left:6px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;">
+                                Downtimes
+                            </button>
+                        </td>
+                    </tr>
+
+                    @if (ExpandedHourlyRecordId == r.Id)
+                    {
+                        <tr>
+                            <td colspan="7" style="padding:10px; border-bottom:1px solid #eee;">
+                                <DowntimeEditor HourlyRecordId="r.Id" OnSaved="HandleDowntimeSaved" OnClosed="HandleDowntimeClosed" />
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div style="margin-top:10px; padding:10px; border:1px solid #c33; border-radius:8px;">
+            @Error
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public ProductionDayDetailsDto? Details { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private string? Error { get; set; }
+
+    private Guid? ExpandedHourlyRecordId { get; set; }
+
+    private sealed class RowEdit
+    {
+        public string? ActualText { get; set; }
+        public string? Comment { get; set; }
+    }
+
+    private readonly Dictionary<Guid, RowEdit> _state = new();
+
+    private RowEdit GetOrCreate(HourlyRecordDto r)
+    {
+        if (_state.TryGetValue(r.Id, out var s))
+            return s;
+
+        s = new RowEdit
+        {
+            ActualText = (r.ActualQty ?? 0).ToString(),
+            Comment = r.Comment
+        };
+        _state[r.Id] = s;
+        return s;
+    }
+
+    private void ToggleDowntime(Guid hourlyRecordId)
+    {
+        if (ExpandedHourlyRecordId == hourlyRecordId)
+            ExpandedHourlyRecordId = null;
+        else
+            ExpandedHourlyRecordId = hourlyRecordId;
+    }
+
+    private async Task HandleDowntimeSaved()
+    {
+        ExpandedHourlyRecordId = null;
+        await OnSaved.InvokeAsync();
+    }
+
+    private Task HandleDowntimeClosed()
+    {
+        ExpandedHourlyRecordId = null;
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveActual(Guid hourlyRecordId)
+    {
+        Error = null;
+
+        if (!CurrentUser.IsSet)
+        {
+            Error = "User not selected.";
+            return;
+        }
+
+        if (!_state.TryGetValue(hourlyRecordId, out var s))
+        {
+            Error = "Row state not found.";
+            return;
+        }
+
+        int? actual = null;
+        if (!string.IsNullOrWhiteSpace(s.ActualText))
+        {
+            if (!int.TryParse(s.ActualText, out var v))
+            {
+                Error = "Actual must be a number.";
+                return;
+            }
+            if (v < 0)
+            {
+                Error = "Actual cannot be negative.";
+                return;
+            }
+            actual = v;
+        }
+
+        try
+        {
+            var req = new UpdateHourlyActualRequestDto(hourlyRecordId, actual, s.Comment);
+            await HourlyRecords.UpdateActualAsync(req, CurrentUser.UserId!.Value);
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+    }
+
+    private void DownloadProductionDayCsv(Guid productionDayId)
+    {
+        Error = null;
+        Nav.NavigateTo($"/api/csv/export/production-day/{productionDayId}", forceLoad: true);
+    }
+
+    private void OpenCsvTools(Guid productionDayId)
+    {
+        Error = null;
+        Nav.NavigateTo($"/integrations/csv?productionDayId={productionDayId}", forceLoad: false);
+    }
+
+    private static Guid? TryGetProductionDayId(ProductionDayDetailsDto details)
+    {
+        var t = details.GetType();
+        var p = t.GetProperty("Id") ?? t.GetProperty("ProductionDayId");
+        if (p == null)
+            return null;
+
+        var v = p.GetValue(details);
+        if (v is Guid g)
+            return g;
+
+        return null;
+    }
+}

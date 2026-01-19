@@ -1,0 +1,131 @@
+﻿@page "/production-days/create"
+@inject ILookupService Lookups
+@inject IProductionDayService ProductionDays
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>Создать смену</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Выбери пользователя.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Перейти</button>
+    </div>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:12px;">
+            @Error
+        </div>
+    }
+
+    <div style="display:flex; flex-direction:column; gap:12px; max-width:520px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Дата</label>
+            <InputDate TValue="DateTime" @bind-Value="DateValue" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>WorkCenter</label>
+            <select @bind="WorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;">
+                <option value="">-- выбери --</option>
+                @foreach (var wc in WorkCenters)
+                {
+                    <option value="@wc.Id">@wc.Name</option>
+                }
+            </select>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Product</label>
+            <select @bind="ProductIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;">
+                <option value="">-- выбери --</option>
+                @foreach (var p in Products)
+                {
+                    <option value="@p.Id">@p.Name</option>
+                }
+            </select>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Takt (сек/шт)</label>
+            <input type="number" @bind="TaktSec" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+        </div>
+
+        <div style="display:flex; gap:10px;">
+            <button type="button" @onclick="Save" style="padding:8px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
+                Создать
+            </button>
+            <button type="button" @onclick="Cancel" style="padding:8px 10px; border:1px solid #aaa; border-radius:8px; background:#fff;">
+                Назад
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<WorkCenterDto> WorkCenters { get; set; } = new();
+    private List<ProductDto> Products { get; set; } = new();
+
+    private DateTime DateValue { get; set; } = DateTime.Today;
+    private string? WorkCenterIdText { get; set; }
+    private string? ProductIdText { get; set; }
+    private int TaktSec { get; set; } = 45;
+
+    private string? Error { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
+        Products = (await Lookups.GetProductsAsync()).ToList();
+    }
+
+    private void GoLogin()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+        var target = string.IsNullOrWhiteSpace(rel) ? "/" : "/" + rel;
+        Nav.NavigateTo($"/auth/user?returnUrl={Uri.EscapeDataString(target)}");
+    }
+
+    private void Cancel()
+    {
+        Nav.NavigateTo("/production-days");
+    }
+
+    private async Task Save()
+    {
+        Error = null;
+
+        if (string.IsNullOrWhiteSpace(WorkCenterIdText) || !Guid.TryParse(WorkCenterIdText, out var wcId))
+        {
+            Error = "Выбери WorkCenter.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(ProductIdText) || !Guid.TryParse(ProductIdText, out var pId))
+        {
+            Error = "Выбери Product.";
+            return;
+        }
+
+        if (TaktSec < 1 || TaktSec > 3600)
+        {
+            Error = "Takt должен быть в диапазоне 1..3600.";
+            return;
+        }
+
+        try
+        {
+            var req = new CreateProductionDayRequestDto(DateOnly.FromDateTime(DateValue), wcId, pId, TaktSec);
+            var id = await ProductionDays.CreateAsync(req, CurrentUser.UserId!.Value);
+            Nav.NavigateTo($"/production-days/{id}");
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+    }
+}

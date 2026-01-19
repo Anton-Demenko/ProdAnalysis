@@ -1,0 +1,42 @@
+﻿@inherits LayoutComponentBase
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<div style="display:flex; min-height:100vh;">
+    <div style="width:260px; border-right:1px solid #ddd; padding:12px;">
+        <NavMenu />
+    </div>
+    <div style="flex:1; padding:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 12px; border:1px solid #ddd; border-radius:8px; margin-bottom:16px;">
+            <div style="font-weight:600;">ProdAnalysis</div>
+            <div style="display:flex; gap:10px; align-items:center;">
+                @if (CurrentUser.IsSet)
+                {
+                    <div>@CurrentUser.DisplayName (@CurrentUser.Role)</div>
+                    <button type="button" @onclick="Logout" style="padding:6px 10px; border:1px solid #aaa; border-radius:6px; background:#fff;">Сменить</button>
+                }
+                else
+                {
+                    <button type="button" @onclick="GoLogin" style="padding:6px 10px; border:1px solid #aaa; border-radius:6px; background:#fff;">Выбрать пользователя</button>
+                }
+            </div>
+        </div>
+
+        @Body
+    </div>
+</div>
+
+@code {
+    private void GoLogin()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+        var target = string.IsNullOrWhiteSpace(rel) ? "/" : "/" + rel;
+        Nav.NavigateTo($"/auth/user?returnUrl={Uri.EscapeDataString(target)}");
+    }
+
+    private void Logout()
+    {
+        CurrentUser.Clear();
+        Nav.NavigateTo("/auth/user", true);
+    }
+}

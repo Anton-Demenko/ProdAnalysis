@@ -1,0 +1,161 @@
+﻿@page "/production-days"
+@inject ILookupService Lookups
+@inject IProductionDayService ProductionDays
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>Список смен</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Выбери пользователя.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Перейти</button>
+    </div>
+}
+else
+{
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-bottom:14px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Дата</label>
+            <InputDate TValue="DateTime ?" @bind-Value="FilterDateValue" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>WorkCenter</label>
+            <select @bind="FilterWorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:220px;">
+                <option value="">Все</option>
+                @foreach (var wc in WorkCenters)
+                {
+                    <option value="@wc.Id">@wc.Name</option>
+                }
+            </select>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Статус</label>
+            <select @bind="FilterStatusText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:140px;">
+                <option value="">Все</option>
+                <option value="@ProductionDayStatus.Active">Active</option>
+                <option value="@ProductionDayStatus.Closed">Closed</option>
+            </select>
+        </div>
+
+        <button type="button" @onclick="Load" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Обновить
+        </button>
+
+        @if (CurrentUser.Role == UserRole.Operator || CurrentUser.Role == UserRole.Admin)
+        {
+            <button type="button" @onclick="Create" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+                Создать смену
+            </button>
+        }
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:12px;">
+            @Error
+        </div>
+    }
+
+    @if (Items.Count == 0)
+    {
+        <div>Пока нет смен по выбранным фильтрам.</div>
+    }
+    else
+    {
+        <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f6f6f6;">
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Дата</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">WorkCenter</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Product</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Takt, sec</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Plan/hour</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Cum dev</th>
+                        <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var it in Items)
+                    {
+                        var devStyle = it.CumDeviationNow < 0 ? "color:#b00; font-weight:700;" : "";
+                        <tr>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.Date.ToString("yyyy-MM-dd")</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.WorkCenterName</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.ProductName</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.TaktSec</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.PlanPerHour</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@it.CumDeviationNow</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
+                                <a href="/production-days/@it.Id">Открыть</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private List<WorkCenterDto> WorkCenters { get; set; } = new();
+    private List<ProductionDayListItemDto> Items { get; set; } = new();
+    private string? Error { get; set; }
+
+    private DateTime? FilterDateValue { get; set; }
+    private string? FilterWorkCenterIdText { get; set; }
+    private string? FilterStatusText { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
+        await LoadAsync();
+    }
+
+    private void GoLogin()
+    {
+        Nav.NavigateTo("/auth/user");
+    }
+
+    private void Create()
+    {
+        Nav.NavigateTo("/production-days/create");
+    }
+
+    private void Load()
+    {
+        _ = LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        Error = null;
+
+        DateOnly? date = null;
+        if (FilterDateValue.HasValue)
+            date = DateOnly.FromDateTime(FilterDateValue.Value);
+
+        Guid? wcId = null;
+        if (!string.IsNullOrWhiteSpace(FilterWorkCenterIdText) && Guid.TryParse(FilterWorkCenterIdText, out var wc))
+            wcId = wc;
+
+        ProductionDayStatus? status = null;
+        if (!string.IsNullOrWhiteSpace(FilterStatusText) && Enum.TryParse<ProductionDayStatus>(FilterStatusText, out var st))
+            status = st;
+
+        try
+        {
+            Items = (await ProductionDays.ListAsync(date, wcId, status)).ToList();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+}

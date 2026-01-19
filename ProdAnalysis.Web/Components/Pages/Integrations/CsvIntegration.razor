@@ -1,0 +1,305 @@
+﻿@page "/integrations/csv"
+
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Forms
+@using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Application.Dtos.Lookups
+@using ProdAnalysis.Web.Services
+
+@inject ICsvIntegrationService Csv
+@inject ILookupService Lookups
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>CSV integration</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Select user first.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Go</button>
+    </div>
+}
+else
+{
+    <div style="display:flex; flex-direction:column; gap:14px; max-width:900px;">
+
+        <div style="padding:12px; border:1px solid #ddd; border-radius:8px;">
+            <div style="font-weight:700; margin-bottom:10px;">Export hourly CSV</div>
+
+            <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:end;">
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <label>ProductionDayId</label>
+                    <input type="text" @bind="ProductionDayIdText" style="min-width:360px; padding:8px 10px; border:1px solid #aaa; border-radius:8px;" />
+                </div>
+
+                <button type="button" @onclick="ExportProductionDay" style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+                    Download
+                </button>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(ExportError))
+            {
+                <div style="margin-top:10px; padding:10px; border:1px solid #c33; border-radius:8px;">
+                    @ExportError
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(ExportHint))
+            {
+                <div style="margin-top:10px; color:#666;">
+                    @ExportHint
+                </div>
+            }
+        </div>
+
+        <div style="padding:12px; border:1px solid #ddd; border-radius:8px;">
+            <div style="font-weight:700; margin-bottom:10px;">Import hourly CSV (updates ActualQty + Comment)</div>
+
+            <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:end;">
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <label>ProductionDayId</label>
+                    <input type="text" @bind="ImportProductionDayIdText" style="min-width:360px; padding:8px 10px; border:1px solid #aaa; border-radius:8px;" />
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <label>CSV file</label>
+                    <InputFile OnChange="OnFileSelected" />
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(ImportError))
+            {
+                <div style="margin-top:10px; padding:10px; border:1px solid #c33; border-radius:8px;">
+                    @ImportError
+                </div>
+            }
+
+            @if (ImportResultText != null)
+            {
+                <div style="margin-top:10px; padding:10px; border:1px solid #ddd; border-radius:8px;">
+                    <div style="font-weight:700; margin-bottom:6px;">Result</div>
+                    <div style="white-space:pre-wrap;">@ImportResultText</div>
+                </div>
+            }
+        </div>
+
+        <div style="padding:12px; border:1px solid #ddd; border-radius:8px;">
+            <div style="font-weight:700; margin-bottom:10px;">Export Pareto downtime CSV</div>
+
+            <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:end;">
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <label>From</label>
+                    <InputDate TValue="DateTime" @bind-Value="ParetoFrom" style="padding:8px 10px; border:1px solid #aaa; border-radius:8px;" />
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <label>To</label>
+                    <InputDate TValue="DateTime" @bind-Value="ParetoTo" style="padding:8px 10px; border:1px solid #aaa; border-radius:8px;" />
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <label>WorkCenter</label>
+                    <select @bind="ParetoWorkCenterIdText" style="min-width:260px; padding:8px 10px; border:1px solid #aaa; border-radius:8px;">
+                        <option value="">All</option>
+                        @foreach (var wc in WorkCenters)
+                        {
+                            <option value="@wc.Id">@wc.Name</option>
+                        }
+                    </select>
+                </div>
+
+                <button type="button" @onclick="ExportPareto" style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+                    Download
+                </button>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(ParetoError))
+            {
+                <div style="margin-top:10px; padding:10px; border:1px solid #c33; border-radius:8px;">
+                    @ParetoError
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(ParetoHint))
+            {
+                <div style="margin-top:10px; color:#666;">
+                    @ParetoHint
+                </div>
+            }
+        </div>
+
+        <div style="padding:12px; border:1px solid #ddd; border-radius:8px;">
+            <div style="font-weight:700; margin-bottom:10px;">Expected hourly CSV format</div>
+            <div style="white-space:pre-wrap; color:#666;">
+HourIndex,HourStart,PlanQty,ActualQty,DowntimeMinutes,Comment
+0,08:00,12,10,0,"ok"
+1,09:00,12,0,15,"setup"
+            </div>
+        </div>
+
+    </div>
+}
+
+@code {
+    [Parameter, SupplyParameterFromQuery(Name = "productionDayId")]
+    public string? ProductionDayIdQuery { get; set; }
+
+    [Parameter, SupplyParameterFromQuery(Name = "from")]
+    public string? ParetoFromQuery { get; set; }
+
+    [Parameter, SupplyParameterFromQuery(Name = "to")]
+    public string? ParetoToQuery { get; set; }
+
+    [Parameter, SupplyParameterFromQuery(Name = "workCenterId")]
+    public string? ParetoWorkCenterIdQuery { get; set; }
+
+    private List<WorkCenterDto> WorkCenters { get; set; } = new();
+
+    private string? ProductionDayIdText { get; set; }
+    private string? ImportProductionDayIdText { get; set; }
+
+    private string? ExportError { get; set; }
+    private string? ExportHint { get; set; }
+
+    private string? ImportError { get; set; }
+    private string? ImportResultText { get; set; }
+
+    private DateTime ParetoFrom { get; set; } = DateTime.Today.AddDays(-7);
+    private DateTime ParetoTo { get; set; } = DateTime.Today;
+    private string? ParetoWorkCenterIdText { get; set; }
+    private string? ParetoError { get; set; }
+    private string? ParetoHint { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrWhiteSpace(ProductionDayIdQuery))
+        {
+            if (string.IsNullOrWhiteSpace(ProductionDayIdText))
+                ProductionDayIdText = ProductionDayIdQuery;
+
+            if (string.IsNullOrWhiteSpace(ImportProductionDayIdText))
+                ImportProductionDayIdText = ProductionDayIdQuery;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ParetoFromQuery) && DateOnly.TryParse(ParetoFromQuery, out var dFrom))
+            ParetoFrom = dFrom.ToDateTime(TimeOnly.MinValue);
+
+        if (!string.IsNullOrWhiteSpace(ParetoToQuery) && DateOnly.TryParse(ParetoToQuery, out var dTo))
+            ParetoTo = dTo.ToDateTime(TimeOnly.MinValue);
+
+        if (!string.IsNullOrWhiteSpace(ParetoWorkCenterIdQuery) && Guid.TryParse(ParetoWorkCenterIdQuery, out var wc))
+            ParetoWorkCenterIdText = wc.ToString();
+    }
+
+    private void GoLogin()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+        var target = string.IsNullOrWhiteSpace(rel) ? "/" : "/" + rel;
+        Nav.NavigateTo($"/auth/user?returnUrl={Uri.EscapeDataString(target)}");
+    }
+
+    private void ExportProductionDay()
+    {
+        ExportError = null;
+        ExportHint = null;
+
+        if (string.IsNullOrWhiteSpace(ProductionDayIdText) || !Guid.TryParse(ProductionDayIdText, out var id))
+        {
+            ExportError = "Invalid ProductionDayId.";
+            return;
+        }
+
+        ExportHint = "If download does not start, open: /api/csv/export/production-day/{id}";
+        Nav.NavigateTo($"/api/csv/export/production-day/{id}", forceLoad: true);
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        ImportError = null;
+        ImportResultText = null;
+
+        if (!CurrentUser.IsSet)
+        {
+            ImportError = "User not selected.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(ImportProductionDayIdText) || !Guid.TryParse(ImportProductionDayIdText, out var dayId))
+        {
+            ImportError = "Invalid ProductionDayId.";
+            return;
+        }
+
+        var file = e.File;
+        if (file == null)
+        {
+            ImportError = "No file selected.";
+            return;
+        }
+
+        try
+        {
+            await using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            var res = await Csv.ImportProductionDayHourlyCsvAsync(dayId, stream, CurrentUser.UserId!.Value);
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"Updated: {res.UpdatedRows}");
+            sb.AppendLine($"Skipped: {res.SkippedRows}");
+
+            if (res.Errors.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Errors:");
+                foreach (var err in res.Errors)
+                    sb.AppendLine(err);
+            }
+
+            ImportResultText = sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            ImportError = ex.Message;
+        }
+    }
+
+    private void ExportPareto()
+    {
+        ParetoError = null;
+        ParetoHint = null;
+
+        var from = DateOnly.FromDateTime(ParetoFrom);
+        var to = DateOnly.FromDateTime(ParetoTo);
+
+        string? wcPart = null;
+        if (!string.IsNullOrWhiteSpace(ParetoWorkCenterIdText))
+        {
+            if (Guid.TryParse(ParetoWorkCenterIdText, out var wcId))
+                wcPart = wcId.ToString();
+            else
+            {
+                ParetoError = "Invalid WorkCenterId.";
+                return;
+            }
+        }
+
+        var qs = new List<string>
+        {
+            $"from={Uri.EscapeDataString(from.ToString("yyyy-MM-dd"))}",
+            $"to={Uri.EscapeDataString(to.ToString("yyyy-MM-dd"))}"
+        };
+
+        if (wcPart != null)
+            qs.Add($"workCenterId={Uri.EscapeDataString(wcPart)}");
+
+        var url = "/api/csv/export/pareto?" + string.Join("&", qs);
+
+        ParetoHint = "If download does not start, open the link directly.";
+        Nav.NavigateTo(url, forceLoad: true);
+    }
+}
