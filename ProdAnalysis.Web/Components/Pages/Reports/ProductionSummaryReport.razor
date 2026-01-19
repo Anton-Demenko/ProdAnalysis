@@ -1,0 +1,221 @@
+﻿@page "/reports/summary"
+
+@using ProdAnalysis.Application.Dtos.Reports
+@using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Application.Dtos.Lookups
+@using ProdAnalysis.Web.Services
+
+@inject IReportService Reports
+@inject ILookupService Lookups
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>Summary report (plan/fact)</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Select user first.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Go</button>
+    </div>
+}
+else
+{
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-bottom:14px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Date from</label>
+            <InputDate TValue="DateTime" @bind-Value="DateFrom" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Date to</label>
+            <InputDate TValue="DateTime" @bind-Value="DateTo" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>WorkCenter</label>
+            <select @bind="WorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:220px;">
+                <option value="">All</option>
+                @foreach (var wc in WorkCenters)
+                {
+                    <option value="@wc.Id">@wc.Name</option>
+                }
+            </select>
+        </div>
+
+        <button type="button" @onclick="Load" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Load
+        </button>
+
+        <button type="button" @onclick="DownloadCsv" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Download CSV
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Hint))
+    {
+        <div style="margin-bottom:12px; padding:10px; border:1px solid #ddd; border-radius:8px;">
+            @Hint
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:12px;">
+            @Error
+        </div>
+    }
+
+    @if (Items.Count == 0)
+    {
+        <div>No data for selected range.</div>
+    }
+    else
+    {
+        <div style="margin-bottom:12px; padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
+            <span style="font-weight:700;">Total:</span>
+            <span style="margin-left:10px;">Plan: @TotalPlan</span>
+            <span style="margin-left:10px;">Actual: @TotalActual</span>
+            <span style="margin-left:10px;">Dev: @TotalDeviation</span>
+        </div>
+
+        <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f6f6f6;">
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Date</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">WorkCenter</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Product</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Plan</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Actual</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Dev</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Status</th>
+                        <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var it in Items)
+                    {
+                        var devStyle = it.DeviationShift < 0 ? "color:#b00; font-weight:700;" : "";
+
+                        <tr>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.Date.ToString("yyyy-MM-dd")</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.WorkCenterName</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">
+                                <div style="font-weight:700;">@it.ProductName</div>
+                                <div style="color:#666;">Takt: @it.TaktSec sec/pc, Plan/h: @it.PlanPerHour</div>
+                            </td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.PlanShift</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.ActualShift</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@it.DeviationShift</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.Status</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">
+                                <a href="/production-days/@it.ProductionDayId">Open</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private List<WorkCenterDto> WorkCenters { get; set; } = new();
+    private List<ProductionSummaryItemDto> Items { get; set; } = new();
+    private string? Error { get; set; }
+    private string? Hint { get; set; }
+
+    private DateTime DateFrom { get; set; } = DateTime.Today.AddDays(-6);
+    private DateTime DateTo { get; set; } = DateTime.Today;
+
+    private string? WorkCenterIdText { get; set; }
+
+    private int TotalPlan { get; set; }
+    private int TotalActual { get; set; }
+    private int TotalDeviation { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
+    }
+
+    private void GoLogin()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+        var target = string.IsNullOrWhiteSpace(rel) ? "/" : "/" + rel;
+        Nav.NavigateTo($"/auth/user?returnUrl={Uri.EscapeDataString(target)}");
+    }
+
+    private void Load()
+    {
+        _ = LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        Error = null;
+        Hint = null;
+        Items = new();
+        TotalPlan = 0;
+        TotalActual = 0;
+        TotalDeviation = 0;
+
+        try
+        {
+            Guid? wcId = null;
+            if (!string.IsNullOrWhiteSpace(WorkCenterIdText) && Guid.TryParse(WorkCenterIdText, out var wc))
+                wcId = wc;
+
+            var from = DateOnly.FromDateTime(DateFrom);
+            var to = DateOnly.FromDateTime(DateTo);
+
+            Items = (await Reports.GetProductionSummaryAsync(from, to, wcId)).ToList();
+
+            TotalPlan = Items.Sum(x => x.PlanShift);
+            TotalActual = Items.Sum(x => x.ActualShift);
+            TotalDeviation = TotalActual - TotalPlan;
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private void DownloadCsv()
+    {
+        Error = null;
+        Hint = null;
+
+        var from = DateOnly.FromDateTime(DateFrom);
+        var to = DateOnly.FromDateTime(DateTo);
+
+        string? wcPart = null;
+        if (!string.IsNullOrWhiteSpace(WorkCenterIdText))
+        {
+            if (Guid.TryParse(WorkCenterIdText, out var wcId))
+                wcPart = wcId.ToString();
+            else
+            {
+                Error = "Invalid WorkCenterId.";
+                return;
+            }
+        }
+
+        var qs = new List<string>
+        {
+            $"from={Uri.EscapeDataString(from.ToString("yyyy-MM-dd"))}",
+            $"to={Uri.EscapeDataString(to.ToString("yyyy-MM-dd"))}"
+        };
+
+        if (wcPart != null)
+            qs.Add($"workCenterId={Uri.EscapeDataString(wcPart)}");
+
+        var url = "/api/csv/export/summary?" + string.Join("&", qs);
+
+        Hint = "If download does not start, open the link directly.";
+        Nav.NavigateTo(url, forceLoad: true);
+    }
+}

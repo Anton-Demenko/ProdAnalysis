@@ -87,7 +87,7 @@ app.MapGet("/api/csv/export/pareto", async (HttpRequest request, ICsvIntegration
     return Results.File(bytes, "text/csv", name);
 });
 
-app.MapGet("/api/csv/export/daily-summary", async (HttpRequest request, ICsvIntegrationService csv) =>
+app.MapGet("/api/csv/export/summary", async (HttpRequest request, ICsvIntegrationService csv) =>
 {
     var fromText = request.Query["from"].ToString();
     var toText = request.Query["to"].ToString();
@@ -108,7 +108,7 @@ app.MapGet("/api/csv/export/daily-summary", async (HttpRequest request, ICsvInte
             return Results.BadRequest("Invalid 'workCenterId'.");
     }
 
-    var bytes = await csv.ExportDailySummaryCsvAsync(from, to, wcId);
+    var bytes = await csv.ExportProductionSummaryCsvAsync(from, to, wcId);
 
     var wcPart = wcId.HasValue ? "_wc" : "";
     var name = $"summary_{from:yyyyMMdd}_{to:yyyyMMdd}{wcPart}.csv";

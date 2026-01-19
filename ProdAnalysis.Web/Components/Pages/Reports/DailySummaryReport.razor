@@ -1,16 +1,18 @@
-﻿@page "/reports/summary"
+﻿@page "/reports/daily"
+@page "/reports/daily-summary"
 
-@using ProdAnalysis.Application.Dtos.Reports
+@using Microsoft.AspNetCore.Components.Forms
 @using ProdAnalysis.Application.Dtos.Lookups
 @using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Domain.Enums
 @using ProdAnalysis.Web.Services
 
-@inject IReportService Reports
 @inject ILookupService Lookups
+@inject IProductionDayService ProductionDays
 @inject CurrentUserService CurrentUser
 @inject NavigationManager Nav
 
-<h3>Summary report (Plan/Fact by shifts)</h3>
+<h3>Daily summary</h3>
 
 @if (!CurrentUser.IsSet)
 {
@@ -23,18 +25,13 @@ else
 {
     <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-bottom:14px;">
         <div style="display:flex; flex-direction:column; gap:6px;">
-            <label>Date from</label>
-            <InputDate TValue="DateTime" @bind-Value="DateFrom" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
-        </div>
-
-        <div style="display:flex; flex-direction:column; gap:6px;">
-            <label>Date to</label>
-            <InputDate TValue="DateTime" @bind-Value="DateTo" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+            <label>Date</label>
+            <InputDate TValue="DateTime" @bind-Value="SelectedDate" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
         </div>
 
         <div style="display:flex; flex-direction:column; gap:6px;">
             <label>WorkCenter</label>
-            <select @bind="WorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:220px;">
+            <select @bind="WorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:260px;">
                 <option value="">All</option>
                 @foreach (var wc in WorkCenters)
                 {
@@ -46,10 +43,6 @@ else
         <button type="button" @onclick="Load" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
             Load
         </button>
-
-        <button type="button" @onclick="DownloadCsv" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
-            Download CSV
-        </button>
     </div>
 
     @if (!string.IsNullOrWhiteSpace(Error))
@@ -59,79 +52,52 @@ else
         </div>
     }
 
-    @if (Items.Count == 0)
+    @if (Rows.Count == 0)
     {
-        <div>No data for selected range.</div>
+        <div>No data.</div>
     }
     else
     {
-        var totalPlan = Items.Sum(x => x.PlanShift);
-        var totalActual = Items.Sum(x => x.ActualShift);
-        var totalDev = Items.Sum(x => x.DeviationShift);
-        var totalDt = Items.Sum(x => x.DowntimeMinutes);
-        var totalOpen = Items.Sum(x => x.DeviationEventsOpen);
-        var totalEv = Items.Sum(x => x.DeviationEventsTotal);
-
-        <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
-            <div style="padding:10px; border:1px solid #ddd; border-radius:8px;">
-                <div style="color:#666;">Plan</div>
-                <div style="font-weight:700;">@totalPlan</div>
-            </div>
-            <div style="padding:10px; border:1px solid #ddd; border-radius:8px;">
-                <div style="color:#666;">Actual</div>
-                <div style="font-weight:700;">@totalActual</div>
-            </div>
-            <div style="padding:10px; border:1px solid #ddd; border-radius:8px;">
-                <div style="color:#666;">Deviation</div>
-                <div style="font-weight:700; @(totalDev < 0 ? "color:#b00;" : "")">@totalDev</div>
-            </div>
-            <div style="padding:10px; border:1px solid #ddd; border-radius:8px;">
-                <div style="color:#666;">Downtime, min</div>
-                <div style="font-weight:700;">@totalDt</div>
-            </div>
-            <div style="padding:10px; border:1px solid #ddd; border-radius:8px;">
-                <div style="color:#666;">Deviation events (open/total)</div>
-                <div style="font-weight:700; @(totalOpen > 0 ? "color:#b00;" : "")">@totalOpen / @totalEv</div>
-            </div>
+        <div style="margin-bottom:12px; padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
+            <span style="font-weight:700;">Total:</span>
+            <span style="margin-left:10px;">Plan: @TotalPlan</span>
+            <span style="margin-left:10px;">Actual: @TotalActual</span>
+            <span style="margin-left:10px;">Dev: @TotalDev</span>
+            <span style="margin-left:10px;">Downtime: @TotalDowntime min</span>
         </div>
 
         <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
             <table style="width:100%; border-collapse:collapse;">
                 <thead>
                     <tr style="background:#f6f6f6;">
-                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Date</th>
                         <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">WorkCenter</th>
                         <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Product</th>
-                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Takt, sec</th>
                         <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Plan</th>
                         <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Actual</th>
-                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Deviation</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Dev</th>
                         <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Downtime, min</th>
-                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Events open</th>
-                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Max level</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Status</th>
                         <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var it in Items)
+                    @foreach (var r in Rows)
                     {
-                        var devStyle = it.DeviationShift < 0 ? "color:#b00; font-weight:700;" : "";
-                        var openStyle = it.DeviationEventsOpen > 0 ? "color:#b00; font-weight:700;" : "";
-                        var dtStyle = it.DowntimeMinutes > 0 ? "font-weight:700;" : "";
+                        var rowStyle = r.Dev < 0 ? "background:#ffecec;" : "";
+                        var devStyle = r.Dev < 0 ? "color:#b00; font-weight:700;" : "";
 
-                        <tr>
-                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.Date.ToString("yyyy-MM-dd")</td>
-                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.WorkCenter</td>
-                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.Product</td>
-                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.TaktSec</td>
-                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.PlanShift</td>
-                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.ActualShift</td>
-                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@it.DeviationShift</td>
-                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @dtStyle">@it.DowntimeMinutes</td>
-                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @openStyle">@it.DeviationEventsOpen</td>
-                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.MaxEscalationLevel</td>
-                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
-                                <a href="@($"/production-days/{it.ProductionDayId}")" style="text-decoration:none;">Open</a>
+                        <tr style="@rowStyle">
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@r.WorkCenter</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@r.Product</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.Plan</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.Actual</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@r.Dev</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.Downtime</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@r.Status</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">
+                                <a href="/production-days/@r.ProductionDayId">Open</a>
+                                <span style="margin-left:10px;"></span>
+                                <a href="/integrations/csv?productionDayId=@r.ProductionDayId">CSV</a>
                             </td>
                         </tr>
                     }
@@ -142,14 +108,29 @@ else
 }
 
 @code {
+    private sealed record Row(
+        Guid ProductionDayId,
+        string WorkCenter,
+        string Product,
+        int Plan,
+        int Actual,
+        int Dev,
+        int Downtime,
+        ProductionDayStatus Status
+    );
+
     private List<WorkCenterDto> WorkCenters { get; set; } = new();
-    private List<DailySummaryItemDto> Items { get; set; } = new();
+    private List<Row> Rows { get; set; } = new();
+
     private string? Error { get; set; }
 
-    private DateTime DateFrom { get; set; } = DateTime.Today.AddDays(-6);
-    private DateTime DateTo { get; set; } = DateTime.Today;
-
+    private DateTime SelectedDate { get; set; } = DateTime.Today;
     private string? WorkCenterIdText { get; set; }
+
+    private int TotalPlan { get; set; }
+    private int TotalActual { get; set; }
+    private int TotalDev { get; set; }
+    private int TotalDowntime { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
@@ -171,27 +152,53 @@ else
     private async Task LoadAsync()
     {
         Error = null;
+        Rows = new List<Row>();
+        TotalPlan = 0;
+        TotalActual = 0;
+        TotalDev = 0;
+        TotalDowntime = 0;
 
         try
         {
             Guid? wcId = null;
-            if (!string.IsNullOrWhiteSpace(WorkCenterIdText))
+            if (!string.IsNullOrWhiteSpace(WorkCenterIdText) && Guid.TryParse(WorkCenterIdText, out var wc))
+                wcId = wc;
+
+            var date = DateOnly.FromDateTime(SelectedDate);
+
+            var list = await ProductionDays.ListAsync(date, wcId, null);
+
+            foreach (var it in list)
             {
-                if (Guid.TryParse(WorkCenterIdText, out var wc))
-                    wcId = wc;
-                else
-                {
-                    Error = "Invalid WorkCenterId.";
-                    Items = new List<DailySummaryItemDto>();
-                    StateHasChanged();
-                    return;
-                }
+                var details = await ProductionDays.GetDetailsAsync(it.Id);
+                if (details == null)
+                    continue;
+
+                var downtime = details.HourlyRecords.Sum(x => x.DowntimeMinutes);
+
+                var row = new Row(
+                    details.Id,
+                    details.WorkCenterName,
+                    details.ProductName,
+                    details.Totals.PlanShift,
+                    details.Totals.ActualShift,
+                    details.Totals.CumDeviation,
+                    downtime,
+                    details.Status
+                );
+
+                Rows.Add(row);
+
+                TotalPlan += row.Plan;
+                TotalActual += row.Actual;
+                TotalDev += row.Dev;
+                TotalDowntime += row.Downtime;
             }
 
-            var from = DateOnly.FromDateTime(DateFrom);
-            var to = DateOnly.FromDateTime(DateTo);
-
-            Items = (await Reports.GetDailySummaryAsync(from, to, wcId)).ToList();
+            Rows = Rows
+                .OrderBy(x => x.WorkCenter)
+                .ThenBy(x => x.Product)
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -199,37 +206,5 @@ else
         }
 
         StateHasChanged();
-    }
-
-    private void DownloadCsv()
-    {
-        Error = null;
-
-        Guid? wcId = null;
-        if (!string.IsNullOrWhiteSpace(WorkCenterIdText))
-        {
-            if (Guid.TryParse(WorkCenterIdText, out var wc))
-                wcId = wc;
-            else
-            {
-                Error = "Invalid WorkCenterId.";
-                return;
-            }
-        }
-
-        var from = DateOnly.FromDateTime(DateFrom);
-        var to = DateOnly.FromDateTime(DateTo);
-
-        var qs = new List<string>
-        {
-            $"from={Uri.EscapeDataString(from.ToString("yyyy-MM-dd"))}",
-            $"to={Uri.EscapeDataString(to.ToString("yyyy-MM-dd"))}"
-        };
-
-        if (wcId.HasValue)
-            qs.Add($"workCenterId={Uri.EscapeDataString(wcId.Value.ToString())}");
-
-        var url = "/api/csv/export/daily-summary?" + string.Join("&", qs);
-        Nav.NavigateTo(url, forceLoad: true);
     }
 }
