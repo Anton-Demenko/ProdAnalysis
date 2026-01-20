@@ -52,20 +52,44 @@ else
         </div>
 
         <div style="display:flex; flex-direction:column; gap:6px;">
-            <label>Takt (сек/шт)</label>
-            <input type="number" @bind="TaktSec" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
-            <div style="color:#666;">Диапазон: 1..86400</div>
+            <label>Режим планирования</label>
+            <select @bind="PlanningModeText" @bind:after="OnPlanningModeChanged"
+                    style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;">
+                <option value="takt">По такту</option>
+                <option value="planHour">План/час</option>
+                <option value="planShift">План на смену</option>
+                <option value="capacityHour">Мощность РМ (шт/час)</option>
+            </select>
         </div>
 
-        <div style="padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
-            <div style="display:flex; gap:10px; align-items:center;">
-                <input type="checkbox" @bind="UseManualPlan" />
-                <div style="font-weight:700;">Ручной план по часам (Manual plan)</div>
+        @if (IsPlanHourMode)
+        {
+            <div style="display:flex; flex-direction:column; gap:6px;">
+                <label>План/час</label>
+                <input type="number" min="0" @bind="PlanPerHourInput"
+                       style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+                <div style="display:flex; gap:16px; flex-wrap:wrap; color:#666;">
+                    <div><b>PlanShift:</b> @(Math.Max(0, PlanPerHourInput) * 8)</div>
+                    <div><b>Takt (справочно):</b> @DerivedTaktText</div>
+                </div>
+            </div>
+        }
+        else if (IsPlanShiftMode)
+        {
+            <div style="display:flex; flex-direction:column; gap:6px;">
+                <label>План на смену</label>
+                <input type="number" min="0" @bind="PlanShiftInput"
+                       style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+                <div style="display:flex; gap:16px; flex-wrap:wrap; color:#666;">
+                    <div><b>Avg plan/h:</b> @((Math.Max(0, PlanShiftInput) / 8.0).ToString("0.##"))</div>
+                    <div><b>Takt (справочно):</b> @DerivedTaktFromShiftText</div>
+                </div>
             </div>
 
-            @if (UseManualPlan)
-            {
-                <div style="margin-top:10px; overflow:auto;">
+            <div style="padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
+                <div style="font-weight:700; margin-bottom:8px;">Распределение по часам</div>
+
+                <div style="overflow:auto;">
                     <table style="width:100%; border-collapse:collapse;">
                         <thead>
                             <tr style="background:#f6f6f6;">
@@ -76,35 +100,92 @@ else
                         <tbody>
                             @for (var i = 0; i < 8; i++)
                             {
+                                var idx = i;
                                 <tr>
-                                    <td style="padding:10px; border-bottom:1px solid #eee;">@HourLabel(i)</td>
-                                    <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
-                                        <input type="number" min="0" @bind="ManualPlan[i]" style="width:140px; padding:6px 8px; border:1px solid #aaa; border-radius:6px; text-align:right;" />
-                                    </td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee;">@HourLabel(idx)</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@PlanShiftHourlyPreview[idx]</td>
                                 </tr>
                             }
                         </tbody>
                     </table>
                 </div>
 
-                <div style="margin-top:10px; display:flex; gap:16px; flex-wrap:wrap;">
-                    <div><b>PlanShift:</b> @ManualPlan.Sum()</div>
-                    <div><b>Avg plan/h:</b> @((ManualPlan.Sum() / 8.0).ToString("0.##"))</div>
-                    <button type="button" @onclick="FillManualFromTakt" style="padding:6px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
-                        Заполнить из такта
-                    </button>
-                    <button type="button" @onclick="ClearManualPlan" style="padding:6px 10px; border:1px solid #aaa; border-radius:8px; background:#fff;">
-                        Очистить
-                    </button>
+                <div style="margin-top:10px; display:flex; gap:16px; flex-wrap:wrap; color:#666;">
+                    <div><b>PlanShift:</b> @Math.Max(0, PlanShiftInput)</div>
                 </div>
-            }
-            else
-            {
-                <div style="margin-top:8px; color:#666;">
-                    План будет рассчитан автоматически по такту (поддерживает &lt; 1 изделия/час через распределение по часу).
+            </div>
+        }
+        else if (IsCapacityHourMode)
+        {
+            <div style="display:flex; flex-direction:column; gap:6px;">
+                <label>Мощность РМ (шт/час)</label>
+                <input type="number" min="0" @bind="CapacityPerHourInput"
+                       style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+                <div style="display:flex; gap:16px; flex-wrap:wrap; color:#666;">
+                    <div><b>PlanShift:</b> @(Math.Max(0, CapacityPerHourInput) * 8)</div>
+                    <div><b>Takt (справочно):</b> @DerivedTaktFromCapacityText</div>
                 </div>
-            }
-        </div>
+            </div>
+        }
+        else
+        {
+            <div style="display:flex; flex-direction:column; gap:6px;">
+                <label>Takt (сек/шт)</label>
+                <input type="number" @bind="TaktSec" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+                <div style="color:#666;">Диапазон: 1..86400</div>
+            </div>
+
+            <div style="padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <input type="checkbox" @bind="UseManualPlan" />
+                    <div style="font-weight:700;">Ручной план по часам (Manual plan)</div>
+                </div>
+
+                @if (UseManualPlan)
+                {
+                    <div style="margin-top:10px; overflow:auto;">
+                        <table style="width:100%; border-collapse:collapse;">
+                            <thead>
+                                <tr style="background:#f6f6f6;">
+                                    <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Час</th>
+                                    <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">PlanQty</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @for (var i = 0; i < 8; i++)
+                                {
+                                    var idx = i;
+
+                                    <tr>
+                                        <td style="padding:10px; border-bottom:1px solid #eee;">@HourLabel(idx)</td>
+                                        <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
+                                            <input type="number" min="0" @bind="ManualPlan[idx]" style="width:140px; padding:6px 8px; border:1px solid #aaa; border-radius:6px; text-align:right;" />
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div style="margin-top:10px; display:flex; gap:16px; flex-wrap:wrap;">
+                        <div><b>PlanShift:</b> @ManualPlan.Sum()</div>
+                        <div><b>Avg plan/h:</b> @((ManualPlan.Sum() / 8.0).ToString("0.##"))</div>
+                        <button type="button" @onclick="FillManualFromTakt" style="padding:6px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
+                            Заполнить из такта
+                        </button>
+                        <button type="button" @onclick="ClearManualPlan" style="padding:6px 10px; border:1px solid #aaa; border-radius:8px; background:#fff;">
+                            Очистить
+                        </button>
+                    </div>
+                }
+                else
+                {
+                    <div style="margin-top:8px; color:#666;">
+                        План будет рассчитан автоматически по такту (поддерживает &lt; 1 изделия/час через распределение по часу).
+                    </div>
+                }
+            </div>
+        }
 
         <div style="display:flex; gap:10px;">
             <button type="button" @onclick="Save" style="padding:8px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
@@ -124,6 +205,16 @@ else
     private DateTime DateValue { get; set; } = DateTime.Today;
     private string? WorkCenterIdText { get; set; }
     private string? ProductIdText { get; set; }
+
+    private string PlanningModeText { get; set; } = "takt";
+    private bool IsPlanHourMode => PlanningModeText == "planHour";
+    private bool IsPlanShiftMode => PlanningModeText == "planShift";
+    private bool IsCapacityHourMode => PlanningModeText == "capacityHour";
+
+    private int PlanPerHourInput { get; set; } = 10;
+    private int PlanShiftInput { get; set; } = 80;
+    private int CapacityPerHourInput { get; set; } = 10;
+
     private int TaktSec { get; set; } = 45;
 
     private int[] ManualPlan { get; set; } = new int[8];
@@ -149,12 +240,83 @@ else
 
     private string? Error { get; set; }
 
+    private string DerivedTaktText
+    {
+        get
+        {
+            var planH = Math.Max(0, PlanPerHourInput);
+            if (planH <= 0)
+                return "—";
+
+            var takt = 3600d / planH;
+            if (takt < 1)
+                takt = 1;
+
+            if (takt > 86400)
+                takt = 86400;
+
+            return ((int)Math.Round(takt)).ToString();
+        }
+    }
+
+    private string DerivedTaktFromCapacityText
+    {
+        get
+        {
+            var capH = Math.Max(0, CapacityPerHourInput);
+            if (capH <= 0)
+                return "—";
+
+            var takt = 3600d / capH;
+            if (takt < 1)
+                takt = 1;
+
+            if (takt > 86400)
+                takt = 86400;
+
+            return ((int)Math.Round(takt)).ToString();
+        }
+    }
+
+    private string DerivedTaktFromShiftText
+    {
+        get
+        {
+            var planShift = Math.Max(0, PlanShiftInput);
+            if (planShift <= 0)
+                return "—";
+
+            var totalSeconds = 8 * 3600d;
+            var takt = totalSeconds / planShift;
+
+            if (takt < 1)
+                takt = 1;
+
+            if (takt > 86400)
+                takt = 86400;
+
+            return ((int)Math.Round(takt)).ToString();
+        }
+    }
+
+    private int[] PlanShiftHourlyPreview => BuildEvenHourlyPlan(Math.Max(0, PlanShiftInput), 8);
+
     protected override async Task OnInitializedAsync()
     {
         WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
         Products = (await Lookups.GetProductsAsync()).ToList();
 
         ApplyQueryPrefill();
+    }
+
+    private void OnPlanningModeChanged()
+    {
+        Error = null;
+
+        if (PlanningModeText != "takt")
+            UseManualPlan = false;
+
+        StateHasChanged();
     }
 
     private void ApplyQueryPrefill()
@@ -207,6 +369,53 @@ else
             ManualPlan[i] = 0;
 
         StateHasChanged();
+    }
+
+    private static int[] BuildEvenHourlyPlan(int planShift, int hours)
+    {
+        if (hours < 1)
+            throw new InvalidOperationException("Hours must be >= 1.");
+
+        if (planShift < 0)
+            throw new InvalidOperationException("PlanShift cannot be negative.");
+
+        var res = new int[hours];
+        if (planShift == 0)
+            return res;
+
+        var basePerHour = planShift / hours;
+        var rem = planShift % hours;
+
+        for (var i = 0; i < hours; i++)
+            res[i] = basePerHour + (i < rem ? 1 : 0);
+
+        return res;
+    }
+
+    private static int DerivedTaktFromShift(int planShift)
+    {
+        if (planShift <= 0)
+            return 86400;
+
+        var totalSeconds = 8 * 3600d;
+        var takt = (int)Math.Round(totalSeconds / planShift);
+
+        if (takt < 1) takt = 1;
+        if (takt > 86400) takt = 86400;
+
+        return takt;
+    }
+
+    private static int DerivedTaktFromPerHour(int perHour)
+    {
+        if (perHour <= 0)
+            return 86400;
+
+        var takt = (int)Math.Round(3600d / perHour);
+        if (takt < 1) takt = 1;
+        if (takt > 86400) takt = 86400;
+
+        return takt;
     }
 
     private static int[] CalculateCumulativeHourlyPlan(int taktSec, int hours)
@@ -266,33 +475,71 @@ else
             return;
         }
 
-        if (TaktSec < 1 || TaktSec > 86400)
-        {
-            Error = "Takt должен быть в диапазоне 1..86400.";
-            return;
-        }
-
         int[]? hourlyPlan = null;
-        if (UseManualPlan)
+        var taktToSend = TaktSec;
+
+        if (IsPlanHourMode)
         {
-            if (ManualPlan.Length != 8)
+            if (PlanPerHourInput < 0)
             {
-                Error = "Manual plan must have 8 values.";
+                Error = "План/час не может быть отрицательным.";
                 return;
             }
 
-            if (ManualPlan.Any(x => x < 0))
+            hourlyPlan = Enumerable.Repeat(PlanPerHourInput, 8).ToArray();
+            taktToSend = DerivedTaktFromPerHour(PlanPerHourInput);
+        }
+        else if (IsPlanShiftMode)
+        {
+            if (PlanShiftInput < 0)
             {
-                Error = "Manual plan values cannot be negative.";
+                Error = "План на смену не может быть отрицательным.";
                 return;
             }
 
-            hourlyPlan = ManualPlan.ToArray();
+            hourlyPlan = BuildEvenHourlyPlan(PlanShiftInput, 8);
+            taktToSend = DerivedTaktFromShift(PlanShiftInput);
+        }
+        else if (IsCapacityHourMode)
+        {
+            if (CapacityPerHourInput < 0)
+            {
+                Error = "Мощность РМ (шт/час) не может быть отрицательной.";
+                return;
+            }
+
+            hourlyPlan = Enumerable.Repeat(CapacityPerHourInput, 8).ToArray();
+            taktToSend = DerivedTaktFromPerHour(CapacityPerHourInput);
+        }
+        else
+        {
+            if (TaktSec < 1 || TaktSec > 86400)
+            {
+                Error = "Takt должен быть в диапазоне 1..86400.";
+                return;
+            }
+
+            if (UseManualPlan)
+            {
+                if (ManualPlan.Length != 8)
+                {
+                    Error = "Manual plan must have 8 values.";
+                    return;
+                }
+
+                if (ManualPlan.Any(x => x < 0))
+                {
+                    Error = "Manual plan values cannot be negative.";
+                    return;
+                }
+
+                hourlyPlan = ManualPlan.ToArray();
+            }
         }
 
         try
         {
-            var req = new CreateProductionDayRequestDto(DateOnly.FromDateTime(DateValue), wcId, pId, TaktSec, hourlyPlan);
+            var req = new CreateProductionDayRequestDto(DateOnly.FromDateTime(DateValue), wcId, pId, taktToSend, hourlyPlan);
             var id = await ProductionDays.CreateAsync(req, CurrentUser.UserId!.Value);
             Nav.NavigateTo($"/production-days/{id}");
         }

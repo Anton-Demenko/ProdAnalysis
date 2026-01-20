@@ -1,5 +1,268 @@
-﻿<h3>DowntimeReasons</h3>
+﻿@page "/admin/downtime-reasons"
+
+@using ProdAnalysis.Application.Dtos.Admin
+@using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Web.Services
+@using ProdAnalysis.Domain.Enums
+
+@inject IDowntimeReasonAdminService DowntimeReasonAdmin
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>Downtime reasons</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Select user first.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Go</button>
+    </div>
+}
+else if (CurrentUser.Role != UserRole.Admin)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Access denied.
+    </div>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:12px;">
+            @Error
+        </div>
+    }
+
+    <div style="display:flex; gap:12px; align-items:end; flex-wrap:wrap; margin-bottom:14px; padding:12px; border:1px solid #ddd; border-radius:8px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Code</label>
+            <input type="text" @bind="NewCode" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; width:180px;" />
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Name</label>
+            <input type="text" @bind="NewName" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; width:320px;" />
+        </div>
+
+        <button type="button" @onclick="Create" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Create
+        </button>
+
+        <button type="button" @onclick="Reload" style="padding:7px 12px; border:1px solid #aaa; border-radius:8px; background:#fff;">
+            Reload
+        </button>
+    </div>
+
+    @if (Items.Count == 0)
+    {
+        <div>No downtime reasons.</div>
+    }
+    else
+    {
+        <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f6f6f6;">
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Name</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Code</th>
+                        <th style="text-align:center; padding:10px; border-bottom:1px solid #ddd;">Active</th>
+                        <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var it in Items)
+                    {
+                        var isEditing = EditingId.HasValue && EditingId.Value == it.Id;
+                        var rowStyle = it.IsActive ? "" : "color:#777;";
+
+                        <tr style="@rowStyle">
+                            <td style="padding:10px; border-bottom:1px solid #eee;">
+                                @if (isEditing)
+                                {
+                                    <input type="text" @bind="EditName" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; width:320px;" />
+                                }
+                                else
+                                {
+                                    @it.Name
+                                }
+                            </td>
+
+                            <td style="padding:10px; border-bottom:1px solid #eee;">
+                                @if (isEditing)
+                                {
+                                    <input type="text" @bind="EditCode" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; width:180px;" />
+                                }
+                                else
+                                {
+                                    @it.Code
+                                }
+                            </td>
+
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:center;">
+                                @(it.IsActive ? "Yes" : "No")
+                            </td>
+
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">
+                                @if (isEditing)
+                                {
+                                    <button type="button" @onclick="SaveEdit" style="padding:6px 10px; border:1px solid #333; border-radius:8px; background:#fff; margin-right:8px;">
+                                        Save
+                                    </button>
+                                    <button type="button" @onclick="CancelEdit" style="padding:6px 10px; border:1px solid #aaa; border-radius:8px; background:#fff;">
+                                        Cancel
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button type="button" @onclick="@(() => StartEdit(it))" style="padding:6px 10px; border:1px solid #333; border-radius:8px; background:#fff; margin-right:8px;">
+                                        Edit
+                                    </button>
+
+                                    @if (it.IsActive)
+                                    {
+                                        <button type="button" @onclick="@(() => SetActive(it.Id, false))" style="padding:6px 10px; border:1px solid #b00; border-radius:8px; background:#fff; color:#b00;">
+                                            Deactivate
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" @onclick="@(() => SetActive(it.Id, true))" style="padding:6px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
+                                            Activate
+                                        </button>
+                                    }
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
 
 @code {
+    private List<DowntimeReasonAdminDto> Items { get; set; } = new();
+    private string? Error { get; set; }
 
+    private string? NewCode { get; set; }
+    private string? NewName { get; set; }
+
+    private Guid? EditingId { get; set; }
+    private string? EditCode { get; set; }
+    private string? EditName { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private void GoLogin()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+        var target = string.IsNullOrWhiteSpace(rel) ? "/" : "/" + rel;
+        Nav.NavigateTo($"/auth/user?returnUrl={Uri.EscapeDataString(target)}");
+    }
+
+    private void Reload()
+    {
+        _ = LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        Error = null;
+
+        try
+        {
+            if (!CurrentUser.IsSet || CurrentUser.Role != UserRole.Admin)
+            {
+                Items = new();
+                EditingId = null;
+                EditCode = null;
+                EditName = null;
+                StateHasChanged();
+                return;
+            }
+
+            Items = (await DowntimeReasonAdmin.ListAsync()).ToList();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task Create()
+    {
+        Error = null;
+
+        try
+        {
+            await DowntimeReasonAdmin.CreateAsync(NewCode ?? "", NewName ?? "");
+            NewCode = null;
+            NewName = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private void StartEdit(DowntimeReasonAdminDto it)
+    {
+        EditingId = it.Id;
+        EditCode = it.Code;
+        EditName = it.Name;
+        StateHasChanged();
+    }
+
+    private void CancelEdit()
+    {
+        EditingId = null;
+        EditCode = null;
+        EditName = null;
+        StateHasChanged();
+    }
+
+    private async Task SaveEdit()
+    {
+        Error = null;
+
+        if (!EditingId.HasValue)
+            return;
+
+        try
+        {
+            await DowntimeReasonAdmin.UpdateAsync(EditingId.Value, EditCode ?? "", EditName ?? "");
+            EditingId = null;
+            EditCode = null;
+            EditName = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SetActive(Guid id, bool isActive)
+    {
+        Error = null;
+
+        try
+        {
+            await DowntimeReasonAdmin.SetActiveAsync(id, isActive);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+            StateHasChanged();
+        }
+    }
 }

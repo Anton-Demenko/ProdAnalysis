@@ -1,10 +1,3 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿namespace ProdAnalysis.Application.Dtos.Admin;
 
-namespace ProdAnalysis.Application.Dtos.Admin
-{
-    internal class DowntimeReasonAdminDto
-    {
-    }
-}
+public sealed record DowntimeReasonAdminDto(Guid Id, string Code, string Name, bool IsActive);

@@ -29,6 +29,7 @@ builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<ICsvIntegrationService, CsvIntegrationService>();
 builder.Services.AddScoped<IWorkCenterAdminService, WorkCenterAdminService>();
 builder.Services.AddScoped<IProductAdminService, ProductAdminService>();
+builder.Services.AddScoped<IDowntimeReasonAdminService, DowntimeReasonAdminService>();
 
 builder.Services.AddHostedService<DeviationEscalationWorker>();
 
