@@ -31,6 +31,9 @@ else
     var isClosed = Details.Status == ProductionDayStatus.Closed;
     var canEditPlan = (CurrentUser.Role == UserRole.Operator || CurrentUser.Role == UserRole.Admin);
 
+    var distinctPlans = Details.HourlyRecords.Select(x => x.PlanQty).Distinct().Count();
+    var isUnevenPlan = distinctPlans > 1;
+
     <div style="display:flex; flex-wrap:wrap; gap:14px; margin-bottom:14px; align-items:flex-end;">
         <div style="padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
             <div style="font-weight:700;">Дата</div>
@@ -52,10 +55,18 @@ else
             <div style="font-weight:700;">Takt</div>
             <div>@Details.TaktSec сек/шт</div>
         </div>
+
         <div style="padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
             <div style="font-weight:700;">Plan/hour</div>
-            <div>@Details.PlanPerHour</div>
+            <div>
+                @Details.PlanPerHour
+                @if (isUnevenPlan)
+                {
+                    <span style="margin-left:8px; color:#666; font-size:13px;">(план распределён по часам)</span>
+                }
+            </div>
         </div>
+
         <div style="padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
             <div style="font-weight:700;">Status</div>
             <div>@Details.Status</div>
@@ -86,7 +97,11 @@ else
         <span style="margin-left:10px;">Dev: @Details.Totals.CumDeviation</span>
     </div>
 
-    <HourlyInputTable Details="Details" OnSaved="Reload" />
+    <CumulativePlanActualChart HourlyRecords="Details.HourlyRecords" />
+
+    <div style="margin-top:12px;">
+        <HourlyInputTable Details="Details" OnSaved="Reload" />
+    </div>
 
     <div style="margin-top:14px; padding:12px; border:1px solid #ddd; border-radius:8px;">
         <div style="font-weight:700; margin-bottom:8px;">Manual plan (по часам)</div>

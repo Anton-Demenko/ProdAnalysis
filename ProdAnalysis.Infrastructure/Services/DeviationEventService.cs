@@ -178,6 +178,41 @@ public sealed class DeviationEventService : IDeviationEventService
         await db.SaveChangesAsync();
     }
 
+    public async Task NotifyAsync(NotifyDeviationRequestDto request, Guid userId)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var ev = await db.DeviationEvents.FirstOrDefaultAsync(x => x.Id == request.DeviationEventId);
+        if (ev == null)
+            throw new InvalidOperationException("DeviationEvent not found.");
+
+        if (ev.Status == DeviationEventStatus.Closed)
+            throw new InvalidOperationException("DeviationEvent is closed.");
+
+        var now = DateTime.UtcNow;
+
+        var level = ev.CurrentEscalationLevel >= 2 ? 2 : 1;
+
+        var note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
+        if (note != null && note.Length > 500)
+            note = note[..500];
+
+        var msg = note == null
+            ? $"Отправлено уведомление (эмуляция) на L{level}."
+            : $"Отправлено уведомление (эмуляция) на L{level}. Примечание: {note}";
+
+        db.EscalationLogs.Add(new EscalationLog
+        {
+            Id = Guid.NewGuid(),
+            DeviationEventId = ev.Id,
+            Level = level,
+            CreatedAt = now,
+            Message = msg
+        });
+
+        await db.SaveChangesAsync();
+    }
+
     internal static async Task EvaluateEscalationsAsync(AppDbContext db, int escalationMinutes)
     {
         if (escalationMinutes <= 0)

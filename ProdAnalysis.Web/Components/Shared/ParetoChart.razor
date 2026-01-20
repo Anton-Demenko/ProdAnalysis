@@ -1,0 +1,210 @@
+﻿@using System.Globalization
+@using System.Net
+@using ProdAnalysis.Application.Dtos.Reports
+
+<div style="border:1px solid #ddd; border-radius:8px; padding:12px;">
+    <div style="display:flex; gap:12px; align-items:baseline; flex-wrap:wrap;">
+        <div style="font-weight:700;">Диаграмма Pareto</div>
+        <div style="color:#666; font-size:13px;">столбики = минуты, линия = накопительный %</div>
+        <div style="margin-left:auto; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:6px;">
+                <span style="display:inline-block; width:14px; height:10px; background:#1f77b4;"></span>
+                <span style="font-size:13px;">Минуты</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px;">
+                <span style="display:inline-block; width:14px; height:3px; background:#ff7f0e;"></span>
+                <span style="font-size:13px;">Cum %</span>
+            </div>
+        </div>
+    </div>
+
+    @if (Items == null || Items.Count == 0 || TotalMinutes <= 0)
+    {
+        <div style="margin-top:10px; color:#666;">Нет данных для диаграммы.</div>
+    }
+    else
+    {
+        <div style="margin-top:10px;">
+            <svg viewBox="0 0 980 360" style="width:100%; height:auto; display:block;">
+                @foreach (var y in GridY)
+                {
+                    <line x1="@PlotLeft" y1="@y" x2="@PlotRight" y2="@y" stroke="#eee" stroke-width="2" />
+                }
+
+                <line x1="@PlotLeft" y1="@PlotTop" x2="@PlotLeft" y2="@PlotBottom" stroke="#ccc" stroke-width="2" />
+                <line x1="@PlotRight" y1="@PlotTop" x2="@PlotRight" y2="@PlotBottom" stroke="#ccc" stroke-width="2" />
+                <line x1="@PlotLeft" y1="@PlotBottom" x2="@PlotRight" y2="@PlotBottom" stroke="#ccc" stroke-width="2" />
+
+                @foreach (var b in Bars)
+                {
+                    <rect x="@b.BarX" y="@b.BarY" width="@b.BarW" height="@b.BarH" fill="#1f77b4"></rect>
+                    <title>@b.Tooltip</title>
+                }
+
+                <path d="@CumPath" fill="none" stroke="#ff7f0e" stroke-width="4" />
+                @foreach (var p in CumPoints)
+                {
+                    <circle cx="@p.X" cy="@p.Y" r="4" fill="#ff7f0e"></circle>
+                }
+
+                @foreach (var lab in XLabels)
+                {
+                    @lab
+                }
+
+                @foreach (var lab in LeftAxisLabels)
+                {
+                    @lab
+                }
+
+                @foreach (var lab in RightAxisLabels)
+                {
+                    @lab
+                }
+
+                <text x="@PlotLeft" y="14" text-anchor="start" font-size="14" fill="#666">мин</text>
+                <text x="@PlotRight" y="14" text-anchor="end" font-size="14" fill="#666">cum %</text>
+            </svg>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<ParetoItemDto> Items { get; set; } = Array.Empty<ParetoItemDto>();
+
+    private const double PlotLeft = 70;
+    private const double PlotRight = 900;
+    private const double PlotTop = 20;
+    private const double PlotBottom = 270;
+
+    private static double PlotWidth => PlotRight - PlotLeft;
+    private static double PlotHeight => PlotBottom - PlotTop;
+
+    private int TotalMinutes { get; set; }
+    private int MaxMinutes { get; set; }
+
+    private List<double> GridY { get; set; } = new();
+    private List<Bar> Bars { get; set; } = new();
+    private List<Point> CumPoints { get; set; } = new();
+    private string CumPath { get; set; } = "";
+
+    private List<MarkupString> XLabels { get; set; } = new();
+    private List<MarkupString> LeftAxisLabels { get; set; } = new();
+    private List<MarkupString> RightAxisLabels { get; set; } = new();
+
+    protected override void OnParametersSet()
+    {
+        Build();
+    }
+
+    private void Build()
+    {
+        Bars.Clear();
+        CumPoints.Clear();
+        GridY.Clear();
+        XLabels.Clear();
+        LeftAxisLabels.Clear();
+        RightAxisLabels.Clear();
+        CumPath = "";
+
+        if (Items == null || Items.Count == 0)
+            return;
+
+        var list = Items
+            .Where(x => x.TotalMinutes > 0)
+            .OrderByDescending(x => x.TotalMinutes)
+            .ToList();
+
+        TotalMinutes = list.Sum(x => x.TotalMinutes);
+        if (TotalMinutes <= 0)
+            return;
+
+        MaxMinutes = list.Max(x => x.TotalMinutes);
+        if (MaxMinutes < 1)
+            MaxMinutes = 1;
+
+        for (var gi = 0; gi <= 4; gi++)
+        {
+            var frac = gi / 4.0;
+            var y = PlotBottom - PlotHeight * frac;
+            GridY.Add(y);
+
+            var minutesLabel = (int)Math.Round(MaxMinutes * frac);
+            var x = PlotLeft - 10;
+            var yy = y + 5;
+            LeftAxisLabels.Add(Txt(x, yy, "end", 14, "#666", minutesLabel.ToString(CultureInfo.InvariantCulture)));
+
+            var pct = (int)Math.Round(100 * frac);
+            var xr = PlotRight + 10;
+            RightAxisLabels.Add(Txt(xr, yy, "start", 14, "#666", pct.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        var n = list.Count;
+        var step = PlotWidth / n;
+        var barW = Math.Max(8, step * 0.62);
+
+        var cum = 0;
+
+        for (var i = 0; i < n; i++)
+        {
+            var it = list[i];
+            cum += it.TotalMinutes;
+
+            var xCenter = PlotLeft + step * (i + 0.5);
+            var barX = xCenter - barW / 2.0;
+
+            var barH = PlotHeight * it.TotalMinutes / MaxMinutes;
+            var barY = PlotBottom - barH;
+
+            var cumPct = (double)cum * 100.0 / TotalMinutes;
+            var cumY = PlotBottom - PlotHeight * (cumPct / 100.0);
+
+            Bars.Add(new Bar
+            {
+                BarX = barX,
+                BarY = barY,
+                BarW = barW,
+                BarH = barH,
+                Tooltip = $"{it.Code} {it.Name} — {it.TotalMinutes} min"
+            });
+
+            CumPoints.Add(new Point(xCenter, cumY));
+
+            var code = string.IsNullOrWhiteSpace(it.Code) ? (i + 1).ToString(CultureInfo.InvariantCulture) : it.Code;
+            code = code.Length > 10 ? code.Substring(0, 10) : code;
+            XLabels.Add(Txt(xCenter, PlotBottom + 28, "middle", 13, "#666", WebUtility.HtmlEncode(code)));
+        }
+
+        CumPath = ToPath(CumPoints.Select(p => (p.X, p.Y)));
+    }
+
+    private static string ToPath(IEnumerable<(double x, double y)> pts)
+    {
+        var list = pts.ToList();
+        if (list.Count == 0)
+            return "";
+
+        var s = $"M {F(list[0].x)} {F(list[0].y)}";
+        for (var i = 1; i < list.Count; i++)
+            s += $" L {F(list[i].x)} {F(list[i].y)}";
+        return s;
+    }
+
+    private static string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+
+    private static MarkupString Txt(double x, double y, string anchor, int size, string fill, string text)
+    {
+        return (MarkupString)$"<text x=\"{F(x)}\" y=\"{F(y)}\" text-anchor=\"{anchor}\" font-size=\"{size}\" fill=\"{fill}\">{text}</text>";
+    }
+
+    private sealed record Point(double X, double Y);
+
+    private sealed class Bar
+    {
+        public double BarX { get; set; }
+        public double BarY { get; set; }
+        public double BarW { get; set; }
+        public double BarH { get; set; }
+        public string Tooltip { get; set; } = "";
+    }
+}

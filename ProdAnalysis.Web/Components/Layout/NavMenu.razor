@@ -1,8 +1,8 @@
 ﻿@implements IDisposable
 @using System.Threading
-@using ProdAnalysis.Domain.Enums
+@using ProdAnalysis.Application.Dtos.Deviations
 @using ProdAnalysis.Application.Services.Interfaces
-
+@using ProdAnalysis.Domain.Enums
 @inject CurrentUserService CurrentUser
 @inject IDeviationEventService Deviations
 
@@ -29,13 +29,33 @@
         @if (CanSeeDeviations)
         {
             <div style="margin-top:10px; font-weight:700;">Отклонения</div>
-            <NavLink href="/deviations" style="text-decoration:none;">
-                Дашборд
-                @if (!string.IsNullOrWhiteSpace(DeviationBadgeText))
+
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                <NavLink href="/deviations" style="text-decoration:none;">Отклонения:</NavLink>
+
+                @if (!string.IsNullOrWhiteSpace(DeviationError))
                 {
-                    <span style="@DeviationBadgeStyle">@DeviationBadgeText</span>
+                    <span style="padding:2px 8px; border:1px solid #b00; border-radius:999px; color:#b00; font-size:12px;">!</span>
                 }
-            </NavLink>
+                else
+                {
+                    <span style="display:inline-flex; gap:6px; align-items:center;">
+                        <span style="padding:2px 8px; border:1px solid #777; border-radius:999px; color:#333; font-size:12px;">
+                            @ActiveDeviationCount
+                        </span>
+                        <span style="padding:2px 8px; border:1px solid #b00; border-radius:999px; color:#b00; font-weight:700; font-size:12px;">
+                            L2: @L2Count
+                        </span>
+                    </span>
+                }
+            </div>
+        }
+
+        @if (CurrentUser.Role == UserRole.Admin)
+        {
+            <div style="margin-top:10px; font-weight:700;">Администрирование</div>
+            <NavLink href="/admin/workcenters" style="text-decoration:none;">WorkCenters</NavLink>
+            <NavLink href="/admin/products" style="text-decoration:none;">Products</NavLink>
         }
     }
     else
@@ -45,50 +65,23 @@
 </div>
 
 @code {
+    private int ActiveDeviationCount { get; set; }
+    private int L2Count { get; set; }
+    private string? DeviationError { get; set; }
+
     private Timer? _timer;
     private int _tickInProgress;
 
-    private int _activeCount;
-    private int _l2WithoutAckCount;
-
     private bool CanSeeDeviations =>
-        CurrentUser.IsSet && (CurrentUser.Role == UserRole.Master || CurrentUser.Role == UserRole.Manager || CurrentUser.Role == UserRole.Admin);
-
-    private string? DeviationBadgeText
-    {
-        get
-        {
-            if (!CanSeeDeviations)
-                return null;
-
-            if (_activeCount <= 0)
-                return null;
-
-            return $"{_activeCount} (L2: {_l2WithoutAckCount})";
-        }
-    }
-
-    private string DeviationBadgeStyle
-    {
-        get
-        {
-            if (_activeCount <= 0)
-                return "display:none;";
-
-            var urgent = _l2WithoutAckCount > 0;
-
-            return urgent
-                ? "margin-left:6px; padding:1px 8px; border:1px solid #b00; border-radius:999px; font-size:12px; color:#b00; font-weight:700;"
-                : "margin-left:6px; padding:1px 8px; border:1px solid #999; border-radius:999px; font-size:12px; color:#333;";
-        }
-    }
+        CurrentUser.IsSet &&
+        (CurrentUser.Role == UserRole.Master || CurrentUser.Role == UserRole.Manager || CurrentUser.Role == UserRole.Admin);
 
     protected override void OnInitialized()
     {
         CurrentUser.Changed += OnChanged;
         _ = InvokeAsync(async () =>
         {
-            await RefreshDeviationCountsAsync();
+            await RefreshCountsAsync();
             EnsureTimer();
             StateHasChanged();
         });
@@ -98,7 +91,7 @@
     {
         _ = InvokeAsync(async () =>
         {
-            await RefreshDeviationCountsAsync();
+            await RefreshCountsAsync();
             EnsureTimer();
             StateHasChanged();
         });
@@ -109,8 +102,9 @@
         if (!CanSeeDeviations)
         {
             StopTimer();
-            _activeCount = 0;
-            _l2WithoutAckCount = 0;
+            ActiveDeviationCount = 0;
+            L2Count = 0;
+            DeviationError = null;
             return;
         }
 
@@ -129,7 +123,7 @@
 
                 try
                 {
-                    await RefreshDeviationCountsAsync();
+                    await RefreshCountsAsync();
                     StateHasChanged();
                 }
                 finally
@@ -149,25 +143,29 @@
         Interlocked.Exchange(ref _tickInProgress, 0);
     }
 
-    private async Task RefreshDeviationCountsAsync()
+    private async Task RefreshCountsAsync()
     {
+        DeviationError = null;
+
         if (!CanSeeDeviations)
         {
-            _activeCount = 0;
-            _l2WithoutAckCount = 0;
+            ActiveDeviationCount = 0;
+            L2Count = 0;
             return;
         }
 
         try
         {
             var list = (await Deviations.ListAsync(null, null, false)).ToList();
-            _activeCount = list.Count(x => x.Status != DeviationEventStatus.Closed);
-            _l2WithoutAckCount = list.Count(x => x.Status == DeviationEventStatus.Open && x.CurrentEscalationLevel >= 2);
+
+            ActiveDeviationCount = list.Count(x => x.Status != DeviationEventStatus.Closed);
+            L2Count = list.Count(x => x.Status == DeviationEventStatus.Open && x.CurrentEscalationLevel >= 2);
         }
-        catch
+        catch (Exception ex)
         {
-            _activeCount = 0;
-            _l2WithoutAckCount = 0;
+            ActiveDeviationCount = 0;
+            L2Count = 0;
+            DeviationError = ex.Message;
         }
     }
 

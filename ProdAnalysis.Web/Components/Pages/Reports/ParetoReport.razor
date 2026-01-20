@@ -4,6 +4,7 @@
 @using ProdAnalysis.Application.Services.Interfaces
 @using ProdAnalysis.Application.Dtos.Lookups
 @using ProdAnalysis.Web.Services
+@using ProdAnalysis.Web.Components.Shared
 
 @inject IDowntimeService DowntimeService
 @inject ILookupService Lookups
@@ -65,6 +66,10 @@ else
     }
     else
     {
+        <ParetoChart Items="Items" />
+
+        <div style="height:12px;"></div>
+
         <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
             <table style="width:100%; border-collapse:collapse;">
                 <thead>

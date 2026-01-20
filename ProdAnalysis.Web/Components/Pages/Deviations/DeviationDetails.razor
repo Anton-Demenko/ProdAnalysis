@@ -1,37 +1,34 @@
 ﻿@page "/deviations/{Id:guid}"
-@implements IDisposable
 
 @using System.Threading
-@using Microsoft.Extensions.Options
-@using ProdAnalysis.Application.Options
 @using ProdAnalysis.Application.Dtos.Deviations
 @using ProdAnalysis.Application.Services.Interfaces
 @using ProdAnalysis.Web.Services
 @using ProdAnalysis.Domain.Enums
 
 @inject IDeviationEventService Deviations
-@inject IOptions<DeviationOptions> DeviationOptions
 @inject CurrentUserService CurrentUser
 @inject NavigationManager Nav
+@inject IConfiguration Configuration
 
-<h3>Детали отклонения</h3>
+<h3>Deviation details</h3>
 
 @if (!CurrentUser.IsSet)
 {
     <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
-        Сначала выбери пользователя.
-        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Перейти</button>
+        Select user first.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Go</button>
     </div>
 }
 else if (CurrentUser.Role != UserRole.Master && CurrentUser.Role != UserRole.Manager && CurrentUser.Role != UserRole.Admin)
 {
     <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
-        Доступ запрещён.
+        Access denied.
     </div>
 }
 else if (IsLoading)
 {
-    <div>Загрузка...</div>
+    <div>Loading...</div>
 }
 else if (!string.IsNullOrWhiteSpace(Error))
 {
@@ -41,13 +38,14 @@ else if (!string.IsNullOrWhiteSpace(Error))
 }
 else if (Details == null)
 {
-    <div>Не найдено.</div>
+    <div>Not found.</div>
 }
 else
 {
     var isClosed = Details.Status == DeviationEventStatus.Closed;
     var canAck = !Details.AcknowledgedAt.HasValue;
     var canClose = !isClosed;
+    var canNotify = !isClosed;
 
     <div style="display:flex; flex-direction:column; gap:12px;">
         <div style="padding:12px; border:1px solid #ddd; border-radius:8px;">
@@ -62,12 +60,8 @@ else
                 <div><b>Deviation:</b> <span style="color:#b00; font-weight:700;">@Details.DeviationQty</span></div>
                 <div><b>Status:</b> @Details.Status</div>
                 <div><b>Level:</b> L@Details.CurrentEscalationLevel</div>
-            </div>
-
-            <div style="margin-top:10px; display:flex; gap:18px; flex-wrap:wrap; align-items:center;">
-                <div><b>Возраст:</b> @AgeText</div>
-                <div><b>До L2:</b> <span style="@ToL2Style">@ToL2Text</span></div>
-                <div style="color:#666;">SLA: @EscalationMinutes мин без ACK</div>
+                <div><b>Age:</b> @_ageMinutes min</div>
+                <div><b>To L2:</b> @ToL2Text</div>
             </div>
 
             <div style="margin-top:8px; color:#666;">
@@ -97,7 +91,7 @@ else
         </div>
 
         <div style="padding:12px; border:1px solid #ddd; border-radius:8px;">
-            <div style="font-weight:700; margin-bottom:8px;">Действия</div>
+            <div style="font-weight:700; margin-bottom:8px;">Actions</div>
 
             @if (!string.IsNullOrWhiteSpace(ActionError))
             {
@@ -106,22 +100,40 @@ else
                 </div>
             }
 
+            @if (!string.IsNullOrWhiteSpace(NotifyError))
+            {
+                <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:10px;">
+                    @NotifyError
+                </div>
+            }
+
             <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-                <button type="button" @onclick="Ack" disabled="@(!canAck)"
+                <button type="button" @onclick="Ack" disabled="@(canAck ? null : "disabled")"
                         style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
                     ACK
                 </button>
 
-                <button type="button" @onclick="Close" disabled="@(!canClose)"
+                <button type="button" @onclick="Close" disabled="@(canClose ? null : "disabled")"
                         style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
                     Close
                 </button>
 
                 <input type="text" placeholder="Close note (optional)" @bind="CloseNote" style="min-width:260px; padding:8px 10px; border:1px solid #aaa; border-radius:8px;" />
 
-                <button type="button" @onclick="Back" style="padding:8px 12px; border:1px solid #aaa; border-radius:8px; background:#fff;">
-                    Назад
+                <button type="button" @onclick="SendNotification" disabled="@(canNotify ? null : "disabled")"
+                        style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+                    Send notification (mock)
                 </button>
+
+                <input type="text" placeholder="Notification note (optional)" @bind="NotifyNote" style="min-width:260px; padding:8px 10px; border:1px solid #aaa; border-radius:8px;" />
+
+                <button type="button" @onclick="Back" style="padding:8px 12px; border:1px solid #aaa; border-radius:8px; background:#fff;">
+                    Back
+                </button>
+            </div>
+
+            <div style="margin-top:10px; color:#666;">
+                Send notification (mock) не отправляет внешние сообщения — только пишет запись в Escalation log.
             </div>
 
             @if (isClosed && canAck)
@@ -176,128 +188,21 @@ else
     private string? ActionError { get; set; }
     private string? CloseNote { get; set; }
 
+    private string? NotifyError { get; set; }
+    private string? NotifyNote { get; set; }
+
     private DeviationEventDetailsDto? Details { get; set; }
 
-    private Timer? _uiTimer;
-    private int _uiTickInProgress;
+    private Timer? _timer;
+    private int _tickInProgress;
 
-    private int EscalationMinutes
-    {
-        get
-        {
-            var v = DeviationOptions.Value.EscalationMinutes;
-            if (v < 1) v = 1;
-            if (v > 24 * 60) v = 24 * 60;
-            return v;
-        }
-    }
-
-    private string AgeText
-    {
-        get
-        {
-            if (Details == null)
-                return "—";
-
-            var min = (int)Math.Floor((DateTime.UtcNow - Details.CreatedAt).TotalMinutes);
-            if (min < 0) min = 0;
-            return $"{min} мин";
-        }
-    }
-
-    private string ToL2Text
-    {
-        get
-        {
-            if (Details == null)
-                return "—";
-
-            if (Details.Status == DeviationEventStatus.Closed)
-                return "—";
-
-            if (Details.CurrentEscalationLevel >= 2)
-                return "Эскалировано";
-
-            if (Details.Status == DeviationEventStatus.Acknowledged)
-                return "ACK";
-
-            var min = (int)Math.Floor((DateTime.UtcNow - Details.CreatedAt).TotalMinutes);
-            if (min < 0) min = 0;
-
-            var rem = EscalationMinutes - min;
-            if (rem <= 0)
-                return "Сейчас";
-
-            return $"{rem} мин";
-        }
-    }
-
-    private string ToL2Style
-    {
-        get
-        {
-            if (Details == null)
-                return "";
-
-            if (Details.Status == DeviationEventStatus.Closed)
-                return "";
-
-            if (Details.CurrentEscalationLevel >= 2)
-                return "font-weight:700;";
-
-            if (Details.Status == DeviationEventStatus.Acknowledged)
-                return "";
-
-            var min = (int)Math.Floor((DateTime.UtcNow - Details.CreatedAt).TotalMinutes);
-            if (min < 0) min = 0;
-
-            var rem = EscalationMinutes - min;
-            if (rem <= 0)
-                return "color:#b00; font-weight:700;";
-
-            if (rem <= 5)
-                return "color:#b00; font-weight:700;";
-
-            return "";
-        }
-    }
+    private int _ageMinutes;
+    private string ToL2Text { get; set; } = "—";
 
     protected override async Task OnParametersSetAsync()
     {
         await LoadAsync();
-        StartUiTimer();
-    }
-
-    private void StartUiTimer()
-    {
-        StopUiTimer();
-
-        _uiTimer = new Timer(_ =>
-        {
-            _ = InvokeAsync(() =>
-            {
-                if (Interlocked.Exchange(ref _uiTickInProgress, 1) == 1)
-                    return;
-
-                try
-                {
-                    StateHasChanged();
-                }
-                finally
-                {
-                    Interlocked.Exchange(ref _uiTickInProgress, 0);
-                }
-            });
-        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
-    }
-
-    private void StopUiTimer()
-    {
-        var t = _uiTimer;
-        _uiTimer = null;
-        if (t != null)
-            t.Dispose();
-        Interlocked.Exchange(ref _uiTickInProgress, 0);
+        StartTimer();
     }
 
     private void GoLogin()
@@ -311,11 +216,13 @@ else
     {
         Error = null;
         ActionError = null;
+        NotifyError = null;
         IsLoading = true;
 
         try
         {
             Details = await Deviations.GetAsync(Id);
+            UpdateTimers();
         }
         catch (Exception ex)
         {
@@ -325,6 +232,76 @@ else
         {
             IsLoading = false;
         }
+    }
+
+    private void StartTimer()
+    {
+        StopTimer();
+
+        _timer = new Timer(_ =>
+        {
+            _ = InvokeAsync(() =>
+            {
+                if (Interlocked.Exchange(ref _tickInProgress, 1) == 1)
+                    return;
+
+                try
+                {
+                    UpdateTimers();
+                    StateHasChanged();
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _tickInProgress, 0);
+                }
+            });
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private void StopTimer()
+    {
+        var t = _timer;
+        _timer = null;
+        if (t != null)
+            t.Dispose();
+
+        Interlocked.Exchange(ref _tickInProgress, 0);
+    }
+
+    private void UpdateTimers()
+    {
+        if (Details == null)
+            return;
+
+        var now = DateTime.UtcNow;
+
+        _ageMinutes = (int)Math.Max(0, Math.Floor((now - Details.CreatedAt).TotalMinutes));
+
+        if (Details.Status == DeviationEventStatus.Closed)
+        {
+            ToL2Text = "—";
+            return;
+        }
+
+        if (Details.AcknowledgedAt.HasValue)
+        {
+            ToL2Text = "ACK";
+            return;
+        }
+
+        if (Details.CurrentEscalationLevel >= 2)
+        {
+            ToL2Text = "Escalated";
+            return;
+        }
+
+        var escalationMinutes = Configuration.GetValue<int?>("Deviations:EscalationMinutes") ?? 30;
+        var toL2 = escalationMinutes - _ageMinutes;
+
+        if (toL2 <= 0)
+            ToL2Text = "Soon";
+        else
+            ToL2Text = $"{toL2} min";
     }
 
     private async Task Ack()
@@ -359,6 +336,23 @@ else
         }
     }
 
+    private async Task SendNotification()
+    {
+        NotifyError = null;
+
+        try
+        {
+            await Deviations.NotifyAsync(new NotifyDeviationRequestDto(Id, NotifyNote), CurrentUser.UserId!.Value);
+            NotifyNote = null;
+            await LoadAsync();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            NotifyError = ex.Message;
+        }
+    }
+
     private void Back()
     {
         Nav.NavigateTo("/deviations");
@@ -366,6 +360,6 @@ else
 
     public void Dispose()
     {
-        StopUiTimer();
+        StopTimer();
     }
 }

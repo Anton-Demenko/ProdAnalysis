@@ -8,4 +8,5 @@ public interface IDeviationEventService
     Task<DeviationEventDetailsDto?> GetAsync(Guid deviationEventId);
     Task AckAsync(AckDeviationRequestDto request, Guid userId);
     Task CloseAsync(CloseDeviationRequestDto request, Guid userId);
+    Task NotifyAsync(NotifyDeviationRequestDto request, Guid userId);
 }
