@@ -1,0 +1,168 @@
+﻿@page "/shifts/compact"
+@using ProdAnalysis.Application.Dtos.Lookups
+@using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Domain.Enums
+@using ProdAnalysis.Web.Services
+
+@inject ILookupService Lookups
+@inject IProductionDayService ProductionDays
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>Группы смен (WorkCenter + Date)</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Выбери пользователя.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Перейти</button>
+    </div>
+}
+else
+{
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-bottom:14px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Дата</label>
+            <InputDate TValue="DateTime" @bind-Value="Date" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>WorkCenter</label>
+            <select @bind="WorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:260px;">
+                <option value="">Все</option>
+                @foreach (var wc in WorkCenters)
+                {
+                    <option value="@wc.Id">@wc.Name</option>
+                }
+            </select>
+        </div>
+
+        <button type="button" @onclick="Load" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Обновить
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:12px;">
+            @Error
+        </div>
+    }
+
+    @if (Rows.Count == 0)
+    {
+        <div>Нет данных для выбранной даты.</div>
+    }
+    else
+    {
+        <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f6f6f6;">
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Дата</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">WorkCenter</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Номенклатур</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Plan</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Dev</th>
+                        <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in Rows)
+                    {
+                        var devStyle = r.Dev < 0 ? "color:#b00; font-weight:700;" : "";
+
+                        <tr>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@r.Date.ToString("yyyy-MM-dd")</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@r.WorkCenterName</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.Products</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.Plan</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@r.Dev</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">
+                                <a href="/shifts/@r.Date.ToString("yyyy-MM-dd")/@r.WorkCenterId">Открыть</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private sealed record Row(
+        DateOnly Date,
+        Guid WorkCenterId,
+        string WorkCenterName,
+        int Products,
+        int Plan,
+        int Dev
+    );
+
+    private List<WorkCenterDto> WorkCenters { get; set; } = new();
+    private List<Row> Rows { get; set; } = new();
+    private string? Error { get; set; }
+
+    private DateTime Date { get; set; } = DateTime.Today;
+    private string? WorkCenterIdText { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
+        await LoadAsync();
+    }
+
+    private void GoLogin()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+        var target = string.IsNullOrWhiteSpace(rel) ? "/" : "/" + rel;
+        Nav.NavigateTo($"/auth/user?returnUrl={Uri.EscapeDataString(target)}");
+    }
+
+    private void Load()
+    {
+        _ = LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        Error = null;
+        Rows = new List<Row>();
+
+        try
+        {
+            var dateOnly = DateOnly.FromDateTime(Date);
+
+            Guid? selectedWcId = null;
+            if (!string.IsNullOrWhiteSpace(WorkCenterIdText) && Guid.TryParse(WorkCenterIdText, out var wc))
+                selectedWcId = wc;
+
+            var targets = selectedWcId.HasValue
+                ? WorkCenters.Where(x => x.Id == selectedWcId.Value).ToList()
+                : WorkCenters.ToList();
+
+            foreach (var wcDto in targets)
+            {
+                var items = await ProductionDays.ListAsync(dateOnly, wcDto.Id, null);
+                if (items.Count == 0)
+                    continue;
+
+                var products = items.Count;
+                var plan = items.Sum(x => x.PlanShift);
+                var dev = items.Sum(x => x.CumDeviationNow);
+
+                Rows.Add(new Row(dateOnly, wcDto.Id, wcDto.Name, products, plan, dev));
+            }
+
+            Rows = Rows
+                .OrderBy(x => x.WorkCenterName)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+}

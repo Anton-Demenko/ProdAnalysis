@@ -4,5 +4,6 @@ public sealed record CreateProductionDayRequestDto(
     DateOnly Date,
     Guid WorkCenterId,
     Guid ProductId,
-    int TaktSec
+    int TaktSec,
+    int[]? HourlyPlan = null
 );

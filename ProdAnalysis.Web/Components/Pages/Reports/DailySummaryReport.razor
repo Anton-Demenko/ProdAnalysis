@@ -6,6 +6,7 @@
 @using ProdAnalysis.Application.Services.Interfaces
 @using ProdAnalysis.Domain.Enums
 @using ProdAnalysis.Web.Services
+@using System.Threading
 
 @inject ILookupService Lookups
 @inject IProductionDayService ProductionDays
@@ -40,6 +41,15 @@ else
             </select>
         </div>
 
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Status</label>
+            <select @bind="FilterStatusText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:160px;">
+                <option value="">All</option>
+                <option value="@ProductionDayStatus.Active">Active</option>
+                <option value="@ProductionDayStatus.Closed">Closed</option>
+            </select>
+        </div>
+
         <button type="button" @onclick="Load" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
             Load
         </button>
@@ -64,6 +74,7 @@ else
             <span style="margin-left:10px;">Actual: @TotalActual</span>
             <span style="margin-left:10px;">Dev: @TotalDev</span>
             <span style="margin-left:10px;">Downtime: @TotalDowntime min</span>
+            <span style="margin-left:10px; color:#666;">Rows: @Rows.Count</span>
         </div>
 
         <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
@@ -126,6 +137,7 @@ else
 
     private DateTime SelectedDate { get; set; } = DateTime.Today;
     private string? WorkCenterIdText { get; set; }
+    private string? FilterStatusText { get; set; }
 
     private int TotalPlan { get; set; }
     private int TotalActual { get; set; }
@@ -164,13 +176,39 @@ else
             if (!string.IsNullOrWhiteSpace(WorkCenterIdText) && Guid.TryParse(WorkCenterIdText, out var wc))
                 wcId = wc;
 
+            ProductionDayStatus? status = null;
+            if (!string.IsNullOrWhiteSpace(FilterStatusText) && Enum.TryParse<ProductionDayStatus>(FilterStatusText, out var st))
+                status = st;
+
             var date = DateOnly.FromDateTime(SelectedDate);
+            var list = await ProductionDays.ListAsync(date, wcId, status);
 
-            var list = await ProductionDays.ListAsync(date, wcId, null);
+            var sem = new SemaphoreSlim(6);
+            var errors = new List<string>();
 
-            foreach (var it in list)
+            var tasks = list.Select(async it =>
             {
-                var details = await ProductionDays.GetDetailsAsync(it.Id);
+                await sem.WaitAsync();
+                try
+                {
+                    return await ProductionDays.GetDetailsAsync(it.Id);
+                }
+                catch (Exception ex)
+                {
+                    lock (errors)
+                        errors.Add($"{it.Id}: {ex.Message}");
+                    return null;
+                }
+                finally
+                {
+                    sem.Release();
+                }
+            }).ToList();
+
+            var detailsList = await Task.WhenAll(tasks);
+
+            foreach (var details in detailsList)
+            {
                 if (details == null)
                     continue;
 
@@ -199,6 +237,9 @@ else
                 .OrderBy(x => x.WorkCenter)
                 .ThenBy(x => x.Product)
                 .ToList();
+
+            if (errors.Count > 0)
+                Error = "Some rows failed to load: " + string.Join("; ", errors.Take(3)) + (errors.Count > 3 ? " ..." : "");
         }
         catch (Exception ex)
         {

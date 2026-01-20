@@ -42,7 +42,7 @@ public sealed class ProductionDayConfiguration : IEntityTypeConfiguration<Produc
         builder.Property(x => x.CreatedByUserId)
             .IsRequired();
 
-        builder.HasIndex(x => new { x.Date, x.ShiftStart, x.WorkCenterId })
+        builder.HasIndex(x => new { x.Date, x.ShiftStart, x.WorkCenterId, x.ProductId })
             .IsUnique();
 
         builder.HasOne(x => x.WorkCenter)

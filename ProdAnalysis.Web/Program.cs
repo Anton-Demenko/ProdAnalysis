@@ -40,6 +40,14 @@ using (var scope = app.Services.CreateScope())
     await using var db = await factory.CreateDbContextAsync();
     await db.Database.MigrateAsync();
     await DbInitializer.SeedAsync(db);
+
+    var demoSeed = app.Configuration.GetValue<bool>("DemoSeed");
+    var demoSeedReset = app.Configuration.GetValue<bool>("DemoSeedReset");
+
+    app.Logger.LogInformation("DemoSeed enabled: {DemoSeed}, reset: {DemoSeedReset}, env: {Env}", demoSeed, demoSeedReset, app.Environment.EnvironmentName);
+
+    if (app.Environment.IsDevelopment() && demoSeed)
+        await DemoSeeder.SeedAsync(db, demoSeedReset);
 }
 
 if (!app.Environment.IsDevelopment())

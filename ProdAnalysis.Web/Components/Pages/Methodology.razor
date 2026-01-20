@@ -1,0 +1,78 @@
+﻿@page "/methodology"
+
+<h3>Методика производственного анализа (МУ-55-2024)</h3>
+
+<div style="max-width:920px; line-height:1.5;">
+    <div style="padding:12px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px;">
+        <div style="font-weight:700; margin-bottom:6px;">Контекст</div>
+        <div>
+            В рамках учебного проекта мы реализуем онлайн-сервис производственного анализа по логике методических указаний ФЦК
+            (в задании указано «МУ-55-2024»). Документ в открытых источниках не найден, поэтому система реализует типовой подход
+            бережливого анализа: план/факт по такту, фиксация простоев, выявление отклонений и цепочка помощи.
+        </div>
+    </div>
+
+    <div style="padding:12px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px;">
+        <div style="font-weight:700; margin-bottom:6px;">Выбранное предприятие и процесс (MVP)</div>
+        <ul>
+            <li>Предприятие: металлообработка</li>
+            <li>Объект анализа: рабочее место (WorkCenter) + номенклатура (Product)</li>
+            <li>Смена: фиксированная 08:00–16:00 (8 часов)</li>
+        </ul>
+    </div>
+
+    <div style="padding:12px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px;">
+        <div style="font-weight:700; margin-bottom:6px;">Метод ведения анализа в MVP</div>
+        <div style="margin-bottom:8px;">
+            Реализован способ «по времени такта» с почасовым вводом факта и накопительным итогом.
+            План по часам рассчитывается накопительным образом: к концу каждого часа считается, сколько изделий должно быть произведено,
+            и разница между соседними часами даёт план данного часа. Это позволяет поддерживать операции &lt;1 изделия/час
+            (в некоторых часах план может быть 0).
+        </div>
+
+        <div style="margin-bottom:8px; font-weight:700;">Правила расчёта</div>
+        <ul>
+            <li>TaktSec (сек/шт) задаётся при создании смены</li>
+            <li>PlanQty задаётся на каждый час смены (может быть 0)</li>
+            <li>ActualQty вводится оператором по каждому часу</li>
+            <li>Накопительный итог: CumPlan / CumActual / CumDeviation = CumActual − CumPlan</li>
+        </ul>
+    </div>
+
+    <div style="padding:12px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px;">
+        <div style="font-weight:700; margin-bottom:6px;">Отклонения и цепочка помощи</div>
+        <ul>
+            <li>Если ActualQty &lt; PlanQty в час — создаётся/поддерживается событие DeviationEvent</li>
+            <li>Если ActualQty ≥ PlanQty — событие автоматически закрывается</li>
+            <li>ACK (подтверждение) фиксируется пользователем</li>
+            <li>Эскалация до L2, если событие Open и нет ACK в течение заданного времени (настраивается)</li>
+        </ul>
+    </div>
+
+    <div style="padding:12px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px;">
+        <div style="font-weight:700; margin-bottom:6px;">Простои и анализ причин</div>
+        <ul>
+            <li>Оператор вводит простои по причинам (DowntimeReason) в минутах в рамках часа</li>
+            <li>Ограничение: сумма простоев в одном часе ≤ 60 минут</li>
+            <li>Отчёт Pareto агрегирует простои по причинам за период</li>
+        </ul>
+    </div>
+
+    <div style="padding:12px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px;">
+        <div style="font-weight:700; margin-bottom:6px;">Интеграции (MVP)</div>
+        <ul>
+            <li>Экспорт/импорт hourly CSV (факт и комментарии)</li>
+            <li>Экспорт Pareto CSV</li>
+            <li>Экспорт сводки Production Summary CSV</li>
+        </ul>
+    </div>
+
+    <div style="padding:12px; border:1px solid #ddd; border-radius:8px;">
+        <div style="font-weight:700; margin-bottom:6px;">Границы MVP</div>
+        <ul>
+            <li>Одна номенклатура на смену (без мульти-номенклатуры в рамках смены)</li>
+            <li>Один такт на смену</li>
+            <li>Глубокая интеграция с 1С/MES не реализована, вместо неё — CSV</li>
+        </ul>
+    </div>
+</div>

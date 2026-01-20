@@ -123,13 +123,12 @@ public sealed class DeviationEventService : IDeviationEventService
         if (ev == null)
             throw new InvalidOperationException("DeviationEvent not found.");
 
-        if (ev.Status == DeviationEventStatus.Closed)
-            throw new InvalidOperationException("DeviationEvent is already closed.");
-
         if (ev.AcknowledgedAt.HasValue)
             return;
 
-        ev.AcknowledgedAt = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
+
+        ev.AcknowledgedAt = now;
         ev.AcknowledgedByUserId = userId;
 
         if (ev.Status == DeviationEventStatus.Open)
@@ -140,8 +139,8 @@ public sealed class DeviationEventService : IDeviationEventService
             Id = Guid.NewGuid(),
             DeviationEventId = ev.Id,
             Level = Math.Max(1, ev.CurrentEscalationLevel),
-            CreatedAt = DateTime.UtcNow,
-            Message = "ACK received."
+            CreatedAt = now,
+            Message = "Подтверждение получено (ACK)."
         });
 
         await db.SaveChangesAsync();
@@ -158,8 +157,10 @@ public sealed class DeviationEventService : IDeviationEventService
         if (ev.Status == DeviationEventStatus.Closed)
             return;
 
+        var now = DateTime.UtcNow;
+
         ev.Status = DeviationEventStatus.Closed;
-        ev.ClosedAt = DateTime.UtcNow;
+        ev.ClosedAt = now;
         ev.ClosedByUserId = userId;
 
         if (!string.IsNullOrWhiteSpace(request.Note))
@@ -170,8 +171,8 @@ public sealed class DeviationEventService : IDeviationEventService
             Id = Guid.NewGuid(),
             DeviationEventId = ev.Id,
             Level = Math.Max(1, ev.CurrentEscalationLevel),
-            CreatedAt = DateTime.UtcNow,
-            Message = "Closed by user."
+            CreatedAt = now,
+            Message = "Закрыто пользователем."
         });
 
         await db.SaveChangesAsync();
@@ -210,7 +211,7 @@ public sealed class DeviationEventService : IDeviationEventService
                     DeviationEventId = ev.Id,
                     Level = 2,
                     CreatedAt = now,
-                    Message = "Escalated to L2 (Manager): no ACK within threshold."
+                    Message = "Эскалация: уровень 2 (руководитель). Нет ACK в установленный срок."
                 });
             }
 

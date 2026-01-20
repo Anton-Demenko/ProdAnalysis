@@ -1,5 +1,10 @@
 ﻿@implements IDisposable
+@using System.Threading
+@using ProdAnalysis.Domain.Enums
+@using ProdAnalysis.Application.Services.Interfaces
+
 @inject CurrentUserService CurrentUser
+@inject IDeviationEventService Deviations
 
 <div style="display:flex; flex-direction:column; gap:10px;">
     <NavLink href="/" Match="NavLinkMatch.All" style="text-decoration:none; font-weight:700;">Главная</NavLink>
@@ -8,6 +13,8 @@
     @if (CurrentUser.IsSet)
     {
         <div style="margin-top:10px; font-weight:700;">Смены</div>
+        <NavLink href="/shifts" style="text-decoration:none;">Группы смен (multi)</NavLink>
+        <NavLink href="/shifts/compact" style="text-decoration:none;">Группы смен (compact)</NavLink>
         <NavLink href="/production-days" style="text-decoration:none;">Список смен</NavLink>
 
         @if (CurrentUser.Role == UserRole.Operator || CurrentUser.Role == UserRole.Admin)
@@ -19,10 +26,16 @@
         <NavLink href="/reports/summary" style="text-decoration:none;">Сводка (план/факт)</NavLink>
         <NavLink href="/reports/pareto" style="text-decoration:none;">Pareto (простои)</NavLink>
 
-        @if (CurrentUser.Role == UserRole.Master || CurrentUser.Role == UserRole.Manager || CurrentUser.Role == UserRole.Admin)
+        @if (CanSeeDeviations)
         {
             <div style="margin-top:10px; font-weight:700;">Отклонения</div>
-            <NavLink href="/deviations" style="text-decoration:none;">Дашборд</NavLink>
+            <NavLink href="/deviations" style="text-decoration:none;">
+                Дашборд
+                @if (!string.IsNullOrWhiteSpace(DeviationBadgeText))
+                {
+                    <span style="@DeviationBadgeStyle">@DeviationBadgeText</span>
+                }
+            </NavLink>
         }
     }
     else
@@ -32,18 +45,135 @@
 </div>
 
 @code {
+    private Timer? _timer;
+    private int _tickInProgress;
+
+    private int _activeCount;
+    private int _l2WithoutAckCount;
+
+    private bool CanSeeDeviations =>
+        CurrentUser.IsSet && (CurrentUser.Role == UserRole.Master || CurrentUser.Role == UserRole.Manager || CurrentUser.Role == UserRole.Admin);
+
+    private string? DeviationBadgeText
+    {
+        get
+        {
+            if (!CanSeeDeviations)
+                return null;
+
+            if (_activeCount <= 0)
+                return null;
+
+            return $"{_activeCount} (L2: {_l2WithoutAckCount})";
+        }
+    }
+
+    private string DeviationBadgeStyle
+    {
+        get
+        {
+            if (_activeCount <= 0)
+                return "display:none;";
+
+            var urgent = _l2WithoutAckCount > 0;
+
+            return urgent
+                ? "margin-left:6px; padding:1px 8px; border:1px solid #b00; border-radius:999px; font-size:12px; color:#b00; font-weight:700;"
+                : "margin-left:6px; padding:1px 8px; border:1px solid #999; border-radius:999px; font-size:12px; color:#333;";
+        }
+    }
+
     protected override void OnInitialized()
     {
         CurrentUser.Changed += OnChanged;
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshDeviationCountsAsync();
+            EnsureTimer();
+            StateHasChanged();
+        });
     }
 
     private void OnChanged()
     {
-        _ = InvokeAsync(StateHasChanged);
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshDeviationCountsAsync();
+            EnsureTimer();
+            StateHasChanged();
+        });
+    }
+
+    private void EnsureTimer()
+    {
+        if (!CanSeeDeviations)
+        {
+            StopTimer();
+            _activeCount = 0;
+            _l2WithoutAckCount = 0;
+            return;
+        }
+
+        if (_timer != null)
+            return;
+
+        _timer = new Timer(_ =>
+        {
+            _ = InvokeAsync(async () =>
+            {
+                if (!CanSeeDeviations)
+                    return;
+
+                if (Interlocked.Exchange(ref _tickInProgress, 1) == 1)
+                    return;
+
+                try
+                {
+                    await RefreshDeviationCountsAsync();
+                    StateHasChanged();
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _tickInProgress, 0);
+                }
+            });
+        }, null, TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(20));
+    }
+
+    private void StopTimer()
+    {
+        var t = _timer;
+        _timer = null;
+        if (t != null)
+            t.Dispose();
+        Interlocked.Exchange(ref _tickInProgress, 0);
+    }
+
+    private async Task RefreshDeviationCountsAsync()
+    {
+        if (!CanSeeDeviations)
+        {
+            _activeCount = 0;
+            _l2WithoutAckCount = 0;
+            return;
+        }
+
+        try
+        {
+            var list = (await Deviations.ListAsync(null, null, false)).ToList();
+            _activeCount = list.Count(x => x.Status != DeviationEventStatus.Closed);
+            _l2WithoutAckCount = list.Count(x => x.Status == DeviationEventStatus.Open && x.CurrentEscalationLevel >= 2);
+        }
+        catch
+        {
+            _activeCount = 0;
+            _l2WithoutAckCount = 0;
+        }
     }
 
     public void Dispose()
     {
         CurrentUser.Changed -= OnChanged;
+        StopTimer();
     }
 }

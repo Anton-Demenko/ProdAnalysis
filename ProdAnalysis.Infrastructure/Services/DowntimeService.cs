@@ -2,7 +2,7 @@
 using ProdAnalysis.Application.Dtos.Downtime;
 using ProdAnalysis.Application.Dtos.Reports;
 using ProdAnalysis.Application.Services.Interfaces;
-using ProdAnalysis.Domain.Entities;
+using ProdAnalysis.Domain.Enums;
 using ProdAnalysis.Infrastructure.Persistence;
 
 namespace ProdAnalysis.Infrastructure.Services;
@@ -56,12 +56,15 @@ public sealed class DowntimeService : IDowntimeService
 
         await using var db = await _dbFactory.CreateDbContextAsync();
 
-        var hrExists = await db.HourlyRecords
-            .AsNoTracking()
-            .AnyAsync(x => x.Id == request.HourlyRecordId);
+        var hr = await db.HourlyRecords
+            .Include(x => x.ProductionDay)
+            .FirstOrDefaultAsync(x => x.Id == request.HourlyRecordId);
 
-        if (!hrExists)
+        if (hr == null)
             throw new InvalidOperationException("HourlyRecord not found.");
+
+        if (hr.ProductionDay.Status == ProductionDayStatus.Closed)
+            throw new InvalidOperationException("ProductionDay is closed. Editing is not allowed.");
 
         var reasonExists = await db.DowntimeReasons
             .AsNoTracking()
@@ -87,7 +90,7 @@ public sealed class DowntimeService : IDowntimeService
 
         if (entity == null)
         {
-            entity = new HourlyDowntime
+            entity = new Domain.Entities.HourlyDowntime
             {
                 Id = Guid.NewGuid(),
                 HourlyRecordId = request.HourlyRecordId,
@@ -113,6 +116,16 @@ public sealed class DowntimeService : IDowntimeService
     public async Task DeleteHourlyDowntimeAsync(DeleteHourlyDowntimeRequestDto request)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var hr = await db.HourlyRecords
+            .Include(x => x.ProductionDay)
+            .FirstOrDefaultAsync(x => x.Id == request.HourlyRecordId);
+
+        if (hr == null)
+            return;
+
+        if (hr.ProductionDay.Status == ProductionDayStatus.Closed)
+            throw new InvalidOperationException("ProductionDay is closed. Editing is not allowed.");
 
         var entity = await db.HourlyDowntimes
             .FirstOrDefaultAsync(x => x.HourlyRecordId == request.HourlyRecordId && x.DowntimeReasonId == request.DowntimeReasonId);

@@ -5,6 +5,7 @@ using ProdAnalysis.Application.Services.Interfaces;
 using ProdAnalysis.Domain.Entities;
 using ProdAnalysis.Domain.Enums;
 using ProdAnalysis.Infrastructure.Persistence;
+using ProdAnalysis.Infrastructure.Services.Deviations;
 
 namespace ProdAnalysis.Infrastructure.Services;
 
@@ -82,6 +83,9 @@ public sealed class CsvIntegrationService : ICsvIntegrationService
 
         if (day == null)
             throw new InvalidOperationException("ProductionDay not found.");
+
+        if (day.Status == ProductionDayStatus.Closed)
+            throw new InvalidOperationException("ProductionDay is closed. Editing is not allowed.");
 
         var hours = await db.HourlyRecords
             .Include(x => x.ProductionDay)
@@ -172,7 +176,7 @@ public sealed class CsvIntegrationService : ICsvIntegrationService
             hr.UpdatedAt = DateTime.UtcNow;
             hr.UpdatedByUserId = userId;
 
-            await UpsertDeviationEventAsync(db, hr, userId);
+            await DeviationEventUpserter.UpsertAsync(db, hr, userId);
 
             if (changed)
                 updated++;
@@ -244,6 +248,84 @@ public sealed class CsvIntegrationService : ICsvIntegrationService
                 it.Minutes.ToString(),
                 pct.ToString("0.##"),
                 cum.ToString("0.##")
+            ));
+        }
+
+        return WithUtf8Bom(sb.ToString());
+    }
+
+    public async Task<byte[]> ExportProductionSummaryCsvAsync(DateOnly from, DateOnly to, Guid? workCenterId)
+    {
+        if (to < from)
+            (from, to) = (to, from);
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var days = await db.ProductionDays
+            .AsNoTracking()
+            .Include(x => x.WorkCenter)
+            .Include(x => x.Product)
+            .Where(x => x.Date >= from && x.Date <= to)
+            .Where(x => !workCenterId.HasValue || x.WorkCenterId == workCenterId.Value)
+            .OrderBy(x => x.Date)
+            .ThenBy(x => x.WorkCenter.Name)
+            .ThenBy(x => x.Product.Name)
+            .ToListAsync();
+
+        var totals = await db.HourlyRecords
+            .AsNoTracking()
+            .Where(x => x.ProductionDay.Date >= from && x.ProductionDay.Date <= to)
+            .Where(x => !workCenterId.HasValue || x.ProductionDay.WorkCenterId == workCenterId.Value)
+            .GroupBy(x => x.ProductionDayId)
+            .Select(g => new
+            {
+                ProductionDayId = g.Key,
+                Plan = g.Sum(x => x.PlanQty),
+                Actual = g.Sum(x => x.ActualQty ?? 0)
+            })
+            .ToDictionaryAsync(x => x.ProductionDayId);
+
+        var downtimes = await db.HourlyDowntimes
+            .AsNoTracking()
+            .Where(x => x.HourlyRecord.ProductionDay.Date >= from && x.HourlyRecord.ProductionDay.Date <= to)
+            .Where(x => !workCenterId.HasValue || x.HourlyRecord.ProductionDay.WorkCenterId == workCenterId.Value)
+            .GroupBy(x => x.HourlyRecord.ProductionDayId)
+            .Select(g => new
+            {
+                ProductionDayId = g.Key,
+                Minutes = g.Sum(x => x.Minutes)
+            })
+            .ToDictionaryAsync(x => x.ProductionDayId, x => x.Minutes);
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine("Report,Production Summary");
+        sb.AppendLine($"From,{Esc(from.ToString("yyyy-MM-dd"))}");
+        sb.AppendLine($"To,{Esc(to.ToString("yyyy-MM-dd"))}");
+        sb.AppendLine($"WorkCenterId,{Esc(workCenterId?.ToString() ?? "All")}");
+        sb.AppendLine();
+
+        sb.AppendLine("Date,WorkCenter,Product,TaktSec,PlanShift,ActualShift,Deviation,DowntimeMinutes,Status,ProductionDayId");
+
+        foreach (var d in days)
+        {
+            totals.TryGetValue(d.Id, out var t);
+            var plan = t?.Plan ?? 0;
+            var actual = t?.Actual ?? 0;
+            var dev = actual - plan;
+            var dt = downtimes.TryGetValue(d.Id, out var m) ? m : 0;
+
+            sb.AppendLine(string.Join(",",
+                Esc(d.Date.ToString("yyyy-MM-dd")),
+                Esc(d.WorkCenter.Name),
+                Esc(d.Product.Name),
+                d.TaktSec.ToString(),
+                plan.ToString(),
+                actual.ToString(),
+                dev.ToString(),
+                dt.ToString(),
+                Esc(d.Status.ToString()),
+                Esc(d.Id.ToString())
             ));
         }
 
@@ -349,79 +431,5 @@ public sealed class CsvIntegrationService : ICsvIntegrationService
 
         res.Add(sb.ToString());
         return res;
-    }
-
-    private static async Task UpsertDeviationEventAsync(AppDbContext db, HourlyRecord hr, Guid userId)
-    {
-        var actual = hr.ActualQty ?? 0;
-        var plan = hr.PlanQty;
-
-        var open = await db.DeviationEvents
-            .OrderByDescending(x => x.CreatedAt)
-            .FirstOrDefaultAsync(x => x.HourlyRecordId == hr.Id && x.Status != DeviationEventStatus.Closed);
-
-        if (actual < plan)
-        {
-            if (open == null)
-            {
-                var ev = new DeviationEvent
-                {
-                    Id = Guid.NewGuid(),
-                    ProductionDayId = hr.ProductionDayId,
-                    HourlyRecordId = hr.Id,
-                    WorkCenterId = hr.ProductionDay.WorkCenterId,
-                    ProductId = hr.ProductionDay.ProductId,
-                    ProductionDate = hr.ProductionDay.Date,
-                    HourIndex = hr.HourIndex,
-                    HourStart = hr.HourStart,
-                    PlanQty = plan,
-                    ActualQty = actual,
-                    DeviationQty = actual - plan,
-                    Status = DeviationEventStatus.Open,
-                    CurrentEscalationLevel = 1,
-                    CreatedAt = DateTime.UtcNow,
-                    CreatedByUserId = userId,
-                    Note = null
-                };
-
-                db.DeviationEvents.Add(ev);
-
-                db.EscalationLogs.Add(new EscalationLog
-                {
-                    Id = Guid.NewGuid(),
-                    DeviationEventId = ev.Id,
-                    Level = 1,
-                    CreatedAt = DateTime.UtcNow,
-                    Message = "Deviation detected (L1: Master)."
-                });
-
-                return;
-            }
-
-            open.PlanQty = plan;
-            open.ActualQty = actual;
-            open.DeviationQty = actual - plan;
-
-            if (open.Status == DeviationEventStatus.Closed)
-                open.Status = DeviationEventStatus.Open;
-
-            return;
-        }
-
-        if (open != null)
-        {
-            open.Status = DeviationEventStatus.Closed;
-            open.ClosedAt = DateTime.UtcNow;
-            open.ClosedByUserId = userId;
-
-            db.EscalationLogs.Add(new EscalationLog
-            {
-                Id = Guid.NewGuid(),
-                DeviationEventId = open.Id,
-                Level = Math.Max(1, open.CurrentEscalationLevel),
-                CreatedAt = DateTime.UtcNow,
-                Message = "Auto-closed: plan met."
-            });
-        }
     }
 }

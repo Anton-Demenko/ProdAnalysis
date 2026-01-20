@@ -5,6 +5,7 @@ using ProdAnalysis.Application.Services.Interfaces;
 using ProdAnalysis.Domain.Entities;
 using ProdAnalysis.Domain.Enums;
 using ProdAnalysis.Infrastructure.Persistence;
+using ProdAnalysis.Infrastructure.Services.Planning;
 
 namespace ProdAnalysis.Infrastructure.Services;
 
@@ -19,25 +20,31 @@ public sealed class ProductionDayService : IProductionDayService
 
     public async Task<Guid> CreateAsync(CreateProductionDayRequestDto request, Guid createdByUserId)
     {
-        if (request.TaktSec < 1 || request.TaktSec > 3600)
-            throw new InvalidOperationException("TaktSec must be in range 1..3600.");
-
-        var planPerHour = 3600 / request.TaktSec;
-        if (planPerHour < 1)
-            throw new InvalidOperationException("PlanPerHour must be >= 1.");
+        if (request.TaktSec < 1 || request.TaktSec > 86400)
+            throw new InvalidOperationException("TaktSec must be in range 1..86400.");
 
         var shiftStart = new TimeOnly(8, 0);
         var shiftEnd = new TimeOnly(16, 0);
         var now = DateTime.UtcNow;
 
+        const int hours = 8;
+
+        var hourlyPlan = BuildHourlyPlan(request, hours);
+        var planShift = hourlyPlan.Sum();
+        var planPerHour = (int)Math.Round(hours == 0 ? 0d : (double)planShift / hours);
+
         await using var db = await _dbFactory.CreateDbContextAsync();
 
         var exists = await db.ProductionDays
             .AsNoTracking()
-            .AnyAsync(x => x.Date == request.Date && x.ShiftStart == shiftStart && x.WorkCenterId == request.WorkCenterId);
+            .AnyAsync(x =>
+                x.Date == request.Date &&
+                x.ShiftStart == shiftStart &&
+                x.WorkCenterId == request.WorkCenterId &&
+                x.ProductId == request.ProductId);
 
         if (exists)
-            throw new InvalidOperationException("ProductionDay already exists for the given date/workcenter/shift start.");
+            throw new InvalidOperationException("ProductionDay already exists for the given date/workcenter/shift/product.");
 
         var pd = new ProductionDay
         {
@@ -54,7 +61,7 @@ public sealed class ProductionDayService : IProductionDayService
             CreatedByUserId = createdByUserId
         };
 
-        for (var i = 0; i < 8; i++)
+        for (var i = 0; i < hours; i++)
         {
             var hr = new HourlyRecord
             {
@@ -62,7 +69,7 @@ public sealed class ProductionDayService : IProductionDayService
                 ProductionDayId = pd.Id,
                 HourIndex = i,
                 HourStart = shiftStart.AddHours(i),
-                PlanQty = planPerHour,
+                PlanQty = hourlyPlan[i],
                 ActualQty = 0,
                 Comment = null,
                 UpdatedAt = now,
@@ -106,16 +113,18 @@ public sealed class ProductionDayService : IProductionDayService
         foreach (var pd in list)
         {
             var ordered = pd.HourlyRecords.OrderBy(x => x.HourIndex).ToList();
-            var cumPlan = 0;
-            var cumActual = 0;
+
+            var planShift = 0;
+            var actualShift = 0;
 
             foreach (var hr in ordered)
             {
-                cumPlan += hr.PlanQty;
-                cumActual += hr.ActualQty ?? 0;
+                planShift += hr.PlanQty;
+                actualShift += hr.ActualQty ?? 0;
             }
 
-            var cumDev = cumActual - cumPlan;
+            var cumDeviationNow = actualShift - planShift;
+            var avgPlanPerHour = ordered.Count <= 0 ? 0d : (double)planShift / ordered.Count;
 
             result.Add(new ProductionDayListItemDto(
                 pd.Id,
@@ -125,7 +134,9 @@ public sealed class ProductionDayService : IProductionDayService
                 pd.TaktSec,
                 pd.PlanPerHour,
                 pd.Status,
-                cumDev
+                cumDeviationNow,
+                planShift,
+                avgPlanPerHour
             ));
         }
 
@@ -197,5 +208,47 @@ public sealed class ProductionDayService : IProductionDayService
             dtos,
             totals
         );
+    }
+
+    public async Task SetStatusAsync(Guid productionDayId, ProductionDayStatus status)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var pd = await db.ProductionDays
+            .FirstOrDefaultAsync(x => x.Id == productionDayId);
+
+        if (pd == null)
+            throw new InvalidOperationException("ProductionDay not found.");
+
+        if (pd.Status == status)
+            return;
+
+        pd.Status = status;
+        await db.SaveChangesAsync();
+    }
+
+    private static int[] BuildHourlyPlan(CreateProductionDayRequestDto request, int hours)
+    {
+        if (hours < 1)
+            throw new InvalidOperationException("Hours must be >= 1.");
+
+        if (request.HourlyPlan != null)
+        {
+            if (request.HourlyPlan.Length != hours)
+                throw new InvalidOperationException($"HourlyPlan must have exactly {hours} values.");
+
+            var res = new int[hours];
+            for (var i = 0; i < hours; i++)
+            {
+                var v = request.HourlyPlan[i];
+                if (v < 0)
+                    throw new InvalidOperationException("HourlyPlan values cannot be negative.");
+                res[i] = v;
+            }
+
+            return res;
+        }
+
+        return ShiftPlanCalculator.CalculateCumulativeHourlyPlan(request.TaktSec, hours);
     }
 }

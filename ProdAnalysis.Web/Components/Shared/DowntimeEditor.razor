@@ -7,7 +7,13 @@
 
 <div style="padding:12px; border:1px solid #ddd; border-radius:8px; background:#fafafa;">
     <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px;">
-        <div style="font-weight:700;">Downtimes</div>
+        <div style="font-weight:700;">
+            Downtimes
+            @if (IsReadOnly)
+            {
+                <span style="margin-left:10px; padding:2px 8px; border:1px solid #999; border-radius:999px; color:#444;">READ ONLY</span>
+            }
+        </div>
         <div style="display:flex; gap:10px; align-items:center;">
             <div style="font-weight:700;">Total: @TotalMinutes / 60</div>
             <button type="button" @onclick="Close" style="padding:6px 10px; border:1px solid #aaa; border-radius:6px; background:#fff;">
@@ -47,10 +53,10 @@
                                 <div style="color:#666;">@e.Code</div>
                             </td>
                             <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
-                                <InputNumber TValue="int" @bind-Value="e.Minutes" style="width:90px; padding:6px 8px; border:1px solid #aaa; border-radius:6px; text-align:right;" />
+                                <InputNumber TValue="int" @bind-Value="e.Minutes" disabled="@IsReadOnly" style="width:90px; padding:6px 8px; border:1px solid #aaa; border-radius:6px; text-align:right;" />
                             </td>
                             <td style="padding:10px; border-bottom:1px solid #eee;">
-                                <input type="text" @bind="e.Comment" style="width:100%; min-width:240px; padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+                                <input type="text" @bind="e.Comment" disabled="@IsReadOnly" style="width:100%; min-width:240px; padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
                             </td>
                         </tr>
                     }
@@ -58,19 +64,23 @@
             </table>
         </div>
 
-        <div style="display:flex; gap:10px; margin-top:10px;">
-            <button type="button" @onclick="Save" style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
-                Save
-            </button>
-            <button type="button" @onclick="Reload" style="padding:8px 12px; border:1px solid #aaa; border-radius:8px; background:#fff;">
-                Reset
-            </button>
-        </div>
+        @if (!IsReadOnly)
+        {
+            <div style="display:flex; gap:10px; margin-top:10px;">
+                <button type="button" @onclick="Save" style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+                    Save
+                </button>
+                <button type="button" @onclick="Reload" style="padding:8px 12px; border:1px solid #aaa; border-radius:8px; background:#fff;">
+                    Reset
+                </button>
+            </div>
+        }
     }
 </div>
 
 @code {
     [Parameter] public Guid HourlyRecordId { get; set; }
+    [Parameter] public bool IsReadOnly { get; set; }
     [Parameter] public EventCallback OnSaved { get; set; }
     [Parameter] public EventCallback OnClosed { get; set; }
 
@@ -144,6 +154,9 @@
 
         try
         {
+            if (IsReadOnly)
+                throw new InvalidOperationException("ProductionDay is closed. Editing is not allowed.");
+
             if (!CurrentUser.IsSet)
                 throw new InvalidOperationException("User not selected.");
 

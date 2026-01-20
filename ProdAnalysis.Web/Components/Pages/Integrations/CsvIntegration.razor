@@ -1,5 +1,6 @@
 ﻿@page "/integrations/csv"
 
+@using System.Text
 @using Microsoft.AspNetCore.Components
 @using Microsoft.AspNetCore.Components.Forms
 @using ProdAnalysis.Application.Services.Interfaces
@@ -130,11 +131,106 @@ else
         </div>
 
         <div style="padding:12px; border:1px solid #ddd; border-radius:8px;">
+            <div style="font-weight:700; margin-bottom:10px;">Production Summary (preview + export)</div>
+
+            <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:end;">
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <label>From</label>
+                    <InputDate TValue="DateTime" @bind-Value="SummaryFrom" style="padding:8px 10px; border:1px solid #aaa; border-radius:8px;" />
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <label>To</label>
+                    <InputDate TValue="DateTime" @bind-Value="SummaryTo" style="padding:8px 10px; border:1px solid #aaa; border-radius:8px;" />
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <label>WorkCenter</label>
+                    <select @bind="SummaryWorkCenterIdText" style="min-width:260px; padding:8px 10px; border:1px solid #aaa; border-radius:8px;">
+                        <option value="">All</option>
+                        @foreach (var wc in WorkCenters)
+                        {
+                            <option value="@wc.Id">@wc.Name</option>
+                        }
+                    </select>
+                </div>
+
+                <button type="button" @onclick="LoadSummaryPreview" style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+                    Preview
+                </button>
+
+                <button type="button" @onclick="ExportSummary" style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+                    Download CSV
+                </button>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(SummaryError))
+            {
+                <div style="margin-top:10px; padding:10px; border:1px solid #c33; border-radius:8px;">
+                    @SummaryError
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(SummaryHint))
+            {
+                <div style="margin-top:10px; color:#666;">
+                    @SummaryHint
+                </div>
+            }
+
+            @if (SummaryRows.Count > 0)
+            {
+                <div style="margin-top:12px; overflow:auto; border:1px solid #e5e5e5; border-radius:8px; background:#fff;">
+                    <table style="width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr style="background:#f6f6f6;">
+                                <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Date</th>
+                                <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">WorkCenter</th>
+                                <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Product</th>
+                                <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Takt</th>
+                                <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Plan</th>
+                                <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Actual</th>
+                                <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Dev</th>
+                                <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">DT min</th>
+                                <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Status</th>
+                                <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in SummaryRows)
+                            {
+                                var devStyle = r.Deviation < 0 ? "color:#b00; font-weight:700;" : "";
+                                <tr>
+                                    <td style="padding:10px; border-bottom:1px solid #eee;">@r.Date</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee;">@r.WorkCenter</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee;">@r.Product</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.TaktSec</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.PlanShift</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.ActualShift</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@r.Deviation</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.DowntimeMinutes</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee;">@r.Status</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">
+                                        <a href="/production-days/@r.ProductionDayId">Open</a>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else if (SummaryPreviewAttempted && string.IsNullOrWhiteSpace(SummaryError))
+            {
+                <div style="margin-top:10px; color:#666;">No data.</div>
+            }
+        </div>
+
+        <div style="padding:12px; border:1px solid #ddd; border-radius:8px;">
             <div style="font-weight:700; margin-bottom:10px;">Expected hourly CSV format</div>
             <div style="white-space:pre-wrap; color:#666;">
-HourIndex,HourStart,PlanQty,ActualQty,DowntimeMinutes,Comment
-0,08:00,12,10,0,"ok"
-1,09:00,12,0,15,"setup"
+                HourIndex,HourStart,PlanQty,ActualQty,DowntimeMinutes,Comment
+                0,08:00,12,10,0,"ok"
+                1,09:00,12,0,15,"setup"
             </div>
         </div>
 
@@ -170,6 +266,28 @@ HourIndex,HourStart,PlanQty,ActualQty,DowntimeMinutes,Comment
     private string? ParetoWorkCenterIdText { get; set; }
     private string? ParetoError { get; set; }
     private string? ParetoHint { get; set; }
+
+    private DateTime SummaryFrom { get; set; } = DateTime.Today.AddDays(-7);
+    private DateTime SummaryTo { get; set; } = DateTime.Today;
+    private string? SummaryWorkCenterIdText { get; set; }
+    private string? SummaryError { get; set; }
+    private string? SummaryHint { get; set; }
+    private bool SummaryPreviewAttempted { get; set; }
+    private List<SummaryRow> SummaryRows { get; set; } = new();
+
+    private sealed class SummaryRow
+    {
+        public string Date { get; set; } = "";
+        public string WorkCenter { get; set; } = "";
+        public string Product { get; set; } = "";
+        public int TaktSec { get; set; }
+        public int PlanShift { get; set; }
+        public int ActualShift { get; set; }
+        public int Deviation { get; set; }
+        public int DowntimeMinutes { get; set; }
+        public string Status { get; set; } = "";
+        public Guid ProductionDayId { get; set; }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -301,5 +419,176 @@ HourIndex,HourStart,PlanQty,ActualQty,DowntimeMinutes,Comment
 
         ParetoHint = "If download does not start, open the link directly.";
         Nav.NavigateTo(url, forceLoad: true);
+    }
+
+    private async Task LoadSummaryPreview()
+    {
+        SummaryError = null;
+        SummaryHint = null;
+        SummaryPreviewAttempted = true;
+        SummaryRows.Clear();
+
+        try
+        {
+            Guid? wcId = null;
+
+            if (!string.IsNullOrWhiteSpace(SummaryWorkCenterIdText))
+            {
+                if (!Guid.TryParse(SummaryWorkCenterIdText, out var wc))
+                    throw new InvalidOperationException("Invalid WorkCenterId.");
+                wcId = wc;
+            }
+
+            var from = DateOnly.FromDateTime(SummaryFrom);
+            var to = DateOnly.FromDateTime(SummaryTo);
+
+            var bytes = await Csv.ExportProductionSummaryCsvAsync(from, to, wcId);
+            var text = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
+
+            var lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None).ToList();
+
+            var headerIndex = -1;
+            for (var i = 0; i < lines.Count; i++)
+            {
+                var t = lines[i].Trim();
+                if (t.StartsWith("Date,WorkCenter,Product,", StringComparison.OrdinalIgnoreCase))
+                {
+                    headerIndex = i;
+                    break;
+                }
+            }
+
+            if (headerIndex < 0)
+                throw new InvalidOperationException("Unexpected CSV format (header not found).");
+
+            for (var i = headerIndex + 1; i < lines.Count; i++)
+            {
+                var raw = lines[i];
+                if (string.IsNullOrWhiteSpace(raw))
+                    continue;
+
+                var row = ParseCsvLine(raw);
+                if (row.Count < 10)
+                    continue;
+
+                var takt = TryParseInt(row[3]);
+                var plan = TryParseInt(row[4]);
+                var actual = TryParseInt(row[5]);
+                var dev = TryParseInt(row[6]);
+                var dt = TryParseInt(row[7]);
+                var status = row[8];
+                var id = Guid.TryParse(row[9], out var gid) ? gid : Guid.Empty;
+
+                SummaryRows.Add(new SummaryRow
+                {
+                    Date = row[0],
+                    WorkCenter = row[1],
+                    Product = row[2],
+                    TaktSec = takt,
+                    PlanShift = plan,
+                    ActualShift = actual,
+                    Deviation = dev,
+                    DowntimeMinutes = dt,
+                    Status = status,
+                    ProductionDayId = id
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            SummaryError = ex.Message;
+        }
+    }
+
+    private void ExportSummary()
+    {
+        SummaryError = null;
+        SummaryHint = null;
+
+        Guid? wcId = null;
+        if (!string.IsNullOrWhiteSpace(SummaryWorkCenterIdText))
+        {
+            if (!Guid.TryParse(SummaryWorkCenterIdText, out var wc))
+            {
+                SummaryError = "Invalid WorkCenterId.";
+                return;
+            }
+            wcId = wc;
+        }
+
+        var from = DateOnly.FromDateTime(SummaryFrom);
+        var to = DateOnly.FromDateTime(SummaryTo);
+
+        var qs = new List<string>
+        {
+            $"from={Uri.EscapeDataString(from.ToString("yyyy-MM-dd"))}",
+            $"to={Uri.EscapeDataString(to.ToString("yyyy-MM-dd"))}"
+        };
+
+        if (wcId.HasValue)
+            qs.Add($"workCenterId={Uri.EscapeDataString(wcId.Value.ToString())}");
+
+        var url = "/api/csv/export/production-summary?" + string.Join("&", qs);
+
+        SummaryHint = "If download does not start, open the link directly.";
+        Nav.NavigateTo(url, forceLoad: true);
+    }
+
+    private static int TryParseInt(string? s)
+    {
+        if (int.TryParse(s, out var v))
+            return v;
+        return 0;
+    }
+
+    private static List<string> ParseCsvLine(string line)
+    {
+        var res = new List<string>();
+        var sb = new System.Text.StringBuilder();
+        var inQuotes = false;
+
+        for (var i = 0; i < line.Length; i++)
+        {
+            var c = line[i];
+
+            if (inQuotes)
+            {
+                if (c == '"')
+                {
+                    if (i + 1 < line.Length && line[i + 1] == '"')
+                    {
+                        sb.Append('"');
+                        i++;
+                    }
+                    else
+                    {
+                        inQuotes = false;
+                    }
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+            else
+            {
+                if (c == ',')
+                {
+                    res.Add(sb.ToString());
+                    sb.Clear();
+                }
+                else if (c == '"')
+                {
+                    inQuotes = true;
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+        }
+
+        res.Add(sb.ToString());
+        return res;
     }
 }

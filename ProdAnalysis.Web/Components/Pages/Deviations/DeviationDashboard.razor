@@ -1,5 +1,9 @@
 ﻿@page "/deviations"
+@implements IDisposable
 
+@using System.Threading
+@using Microsoft.Extensions.Options
+@using ProdAnalysis.Application.Options
 @using ProdAnalysis.Application.Dtos.Deviations
 @using ProdAnalysis.Application.Services.Interfaces
 @using ProdAnalysis.Application.Dtos.Lookups
@@ -8,36 +12,44 @@
 
 @inject IDeviationEventService Deviations
 @inject ILookupService Lookups
+@inject IOptions<DeviationOptions> DeviationOptions
 @inject CurrentUserService CurrentUser
 @inject NavigationManager Nav
 
-<h3>Deviations dashboard</h3>
+<h3>Дашборд отклонений</h3>
 
 @if (!CurrentUser.IsSet)
 {
     <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
-        Select user first.
-        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Go</button>
+        Сначала выбери пользователя.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Перейти</button>
     </div>
 }
 else if (CurrentUser.Role != UserRole.Master && CurrentUser.Role != UserRole.Manager && CurrentUser.Role != UserRole.Admin)
 {
     <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
-        Access denied.
+        Доступ запрещён.
     </div>
 }
 else
 {
     <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-bottom:14px;">
         <div style="display:flex; flex-direction:column; gap:6px;">
-            <label>Date</label>
-            <InputDate TValue="DateTime" @bind-Value="Date" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+            <label>Дата</label>
+            <InputDate TValue="DateTime ?" @bind-Value="DateValue" @bind-Value:after="OnFiltersChanged"
+                       style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" disabled="@AllDates" />
+        </div>
+
+        <div style="display:flex; align-items:center; gap:8px; padding-bottom:4px;">
+            <input type="checkbox" @bind="AllDates" @bind:after="OnFiltersChanged" />
+            <label style="margin:0;">Все даты</label>
         </div>
 
         <div style="display:flex; flex-direction:column; gap:6px;">
             <label>WorkCenter</label>
-            <select @bind="WorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:220px;">
-                <option value="">All</option>
+            <select @bind="WorkCenterIdText" @bind:after="OnFiltersChanged"
+                    style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:220px;">
+                <option value="">Все</option>
                 @foreach (var wc in WorkCenters)
                 {
                     <option value="@wc.Id">@wc.Name</option>
@@ -46,13 +58,24 @@ else
         </div>
 
         <div style="display:flex; align-items:center; gap:8px; padding-bottom:4px;">
-            <input type="checkbox" @bind="IncludeClosed" />
-            <label style="margin:0;">Show closed</label>
+            <input type="checkbox" @bind="IncludeClosed" @bind:after="OnFiltersChanged" />
+            <label style="margin:0;">Показывать закрытые</label>
         </div>
 
         <button type="button" @onclick="Load" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
-            Load
+            Обновить
         </button>
+
+        <div style="display:flex; align-items:center; gap:8px; padding-bottom:4px; margin-left:auto;">
+            <input type="checkbox" @bind="AutoRefresh" @bind:after="OnAutoRefreshSettingsChanged" />
+            <label style="margin:0;">Автообновление</label>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Интервал, сек</label>
+            <input type="number" min="2" max="300" step="1" @bind="AutoRefreshSeconds" @bind:after="OnAutoRefreshSettingsChanged"
+                   style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; width:120px;" />
+        </div>
     </div>
 
     @if (!string.IsNullOrWhiteSpace(Error))
@@ -62,9 +85,15 @@ else
         </div>
     }
 
+    <div style="margin-bottom:10px; color:#444;">
+        Активных: <b>@ActiveCount</b>
+        <span style="margin-left:12px;">L2 без ACK: <b>@L2WithoutAckCount</b></span>
+        <span style="margin-left:12px;">SLA до L2: <b>@EscalationMinutes</b> мин</span>
+    </div>
+
     @if (Items.Count == 0)
     {
-        <div>No deviations.</div>
+        <div>Отклонений нет.</div>
     }
     else
     {
@@ -72,23 +101,30 @@ else
             <table style="width:100%; border-collapse:collapse;">
                 <thead>
                     <tr style="background:#f6f6f6;">
-                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">When</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Когда</th>
                         <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">WorkCenter</th>
                         <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Product</th>
                         <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Plan</th>
                         <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Actual</th>
                         <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Dev</th>
-                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Status</th>
-                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Age, min</th>
-                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Level</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Статус</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Возраст, мин</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">До L2</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Уровень</th>
                         <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach (var it in Items)
                     {
+                        var isClosed = it.Status == DeviationEventStatus.Closed;
                         var rowStyle = it.CurrentEscalationLevel >= 2 ? "background:#fff3cd;" : "";
-                        var devStyle = "color:#b00; font-weight:700;";
+                        if (isClosed)
+                            rowStyle = string.IsNullOrWhiteSpace(rowStyle) ? "color:#777;" : rowStyle + " color:#777;";
+
+                        var devStyle = it.DeviationQty < 0 ? "color:#b00; font-weight:700;" : "";
+
+                        var toL2Text = GetToL2Text(it, out var toL2Style);
 
                         <tr style="@rowStyle">
                             <td style="padding:10px; border-bottom:1px solid #eee;">
@@ -101,9 +137,10 @@ else
                             <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@it.DeviationQty</td>
                             <td style="padding:10px; border-bottom:1px solid #eee;">@it.Status</td>
                             <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.AgeMinutes</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @toL2Style">@toL2Text</td>
                             <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">L@it.CurrentEscalationLevel</td>
                             <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
-                                <NavLink href="@($"/deviations/{it.Id}")" style="text-decoration:none;">Open</NavLink>
+                                <NavLink href="@($"/deviations/{it.Id}")" style="text-decoration:none;">Открыть</NavLink>
                             </td>
                         </tr>
                     }
@@ -118,9 +155,32 @@ else
     private List<DeviationEventListItemDto> Items { get; set; } = new();
     private string? Error { get; set; }
 
-    private DateTime Date { get; set; } = DateTime.Today;
+    private DateTime? DateValue { get; set; } = DateTime.Today;
+    private bool AllDates { get; set; }
     private string? WorkCenterIdText { get; set; }
     private bool IncludeClosed { get; set; }
+
+    private bool AutoRefresh { get; set; }
+    private int AutoRefreshSeconds { get; set; } = 10;
+
+    private Timer? _timer;
+    private int _tickInProgress;
+
+    private int EscalationMinutes
+    {
+        get
+        {
+            var v = DeviationOptions.Value.EscalationMinutes;
+            if (v < 1) v = 1;
+            if (v > 24 * 60) v = 24 * 60;
+            return v;
+        }
+    }
+
+    private int ActiveCount => Items.Count(x => x.Status != DeviationEventStatus.Closed);
+
+    private int L2WithoutAckCount => Items.Count(x =>
+        x.Status == DeviationEventStatus.Open && x.CurrentEscalationLevel >= 2);
 
     protected override async Task OnInitializedAsync()
     {
@@ -140,6 +200,62 @@ else
         _ = LoadAsync();
     }
 
+    private void OnFiltersChanged()
+    {
+        _ = LoadAsync();
+        if (AutoRefresh)
+            RestartTimer();
+    }
+
+    private void OnAutoRefreshSettingsChanged()
+    {
+        _ = LoadAsync();
+        RestartTimer();
+    }
+
+    private void RestartTimer()
+    {
+        StopTimer();
+
+        if (!AutoRefresh)
+            return;
+
+        var sec = AutoRefreshSeconds;
+        if (sec < 2) sec = 2;
+        if (sec > 300) sec = 300;
+        AutoRefreshSeconds = sec;
+
+        _timer = new Timer(_ =>
+        {
+            _ = InvokeAsync(async () =>
+            {
+                if (!AutoRefresh)
+                    return;
+
+                if (Interlocked.Exchange(ref _tickInProgress, 1) == 1)
+                    return;
+
+                try
+                {
+                    await LoadAsync();
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _tickInProgress, 0);
+                }
+            });
+        }, null, TimeSpan.FromSeconds(sec), TimeSpan.FromSeconds(sec));
+    }
+
+    private void StopTimer()
+    {
+        var t = _timer;
+        _timer = null;
+        if (t != null)
+            t.Dispose();
+        Interlocked.Exchange(ref _tickInProgress, 0);
+    }
+
     private async Task LoadAsync()
     {
         Error = null;
@@ -150,8 +266,19 @@ else
             if (!string.IsNullOrWhiteSpace(WorkCenterIdText) && Guid.TryParse(WorkCenterIdText, out var wc))
                 wcId = wc;
 
-            var dateOnly = DateOnly.FromDateTime(Date);
-            Items = (await Deviations.ListAsync(dateOnly, wcId, IncludeClosed)).ToList();
+            DateOnly? dateOnly = null;
+            if (!AllDates && DateValue.HasValue)
+                dateOnly = DateOnly.FromDateTime(DateValue.Value);
+
+            var list = (await Deviations.ListAsync(dateOnly, wcId, IncludeClosed)).ToList();
+
+            Items = list
+                .OrderBy(x => x.Status == DeviationEventStatus.Closed ? 2 : x.Status == DeviationEventStatus.Acknowledged ? 1 : 0)
+                .ThenByDescending(x => x.CurrentEscalationLevel >= 2)
+                .ThenByDescending(x => x.AgeMinutes)
+                .ThenByDescending(x => x.ProductionDate)
+                .ThenByDescending(x => x.HourStart)
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -159,5 +286,39 @@ else
         }
 
         StateHasChanged();
+    }
+
+    private string GetToL2Text(DeviationEventListItemDto it, out string style)
+    {
+        style = "";
+
+        if (it.Status == DeviationEventStatus.Closed)
+            return "—";
+
+        if (it.CurrentEscalationLevel >= 2)
+        {
+            style = "font-weight:700;";
+            return "Эскал.";
+        }
+
+        if (it.Status == DeviationEventStatus.Acknowledged)
+            return "ACK";
+
+        var rem = EscalationMinutes - it.AgeMinutes;
+        if (rem <= 0)
+        {
+            style = "color:#b00; font-weight:700;";
+            return "Сейчас";
+        }
+
+        if (rem <= 5)
+            style = "color:#b00; font-weight:700;";
+
+        return rem.ToString();
+    }
+
+    public void Dispose()
+    {
+        StopTimer();
     }
 }

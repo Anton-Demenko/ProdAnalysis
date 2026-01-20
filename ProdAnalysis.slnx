@@ -1,4 +1,8 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="DEMO_CHECKLIST.md" />
+    <File Path="TRACEABILITY.md" />
+  </Folder>
   <Project Path="ProdAnalysis.Application/ProdAnalysis.Application.csproj" />
   <Project Path="ProdAnalysis.Domain/ProdAnalysis.Domain.csproj" />
   <Project Path="ProdAnalysis.Infrastructure/ProdAnalysis.Infrastructure.csproj" />

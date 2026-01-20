@@ -1,27 +1,334 @@
 ﻿@page "/"
+@implements IDisposable
+@using System.Threading
+@using ProdAnalysis.Domain.Enums
+@using ProdAnalysis.Application.Dtos.Lookups
+@using ProdAnalysis.Application.Dtos.ProductionDays
+@using ProdAnalysis.Application.Dtos.Deviations
+@using ProdAnalysis.Application.Services.Interfaces
+
 @inject CurrentUserService CurrentUser
 @inject NavigationManager Nav
+@inject ILookupService Lookups
+@inject IProductionDayService ProductionDays
+@inject IDeviationEventService Deviations
 
 <h3>ProdAnalysis MVP</h3>
 
-@if (!CurrentUser.IsSet)
-{
-    <div style="margin-top:12px;">
-        <button type="button" @onclick="GoLogin" style="padding:8px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
-            Выбрать пользователя
-        </button>
+<div style="max-width:920px;">
+    <div style="padding:12px; border:1px solid #ddd; border-radius:8px; margin-top:12px;">
+        <div style="font-weight:700; margin-bottom:6px;">Что это</div>
+        <div>
+            Онлайн-сервис производственного анализа для металлообработки: смены 08:00–16:00, почасовой план/факт, простои,
+            отклонения и цепочка помощи, отчёты и CSV-интеграции.
+        </div>
+        <div style="margin-top:8px;">
+            <a href="/methodology">Открыть методику (МУ-55-2024)</a>
+        </div>
     </div>
-}
-else
-{
-    <div style="margin-top:12px;">
-        <a href="/production-days">Перейти к сменам</a>
-    </div>
-}
+
+    @if (!CurrentUser.IsSet)
+    {
+        <div style="margin-top:12px;">
+            <button type="button" @onclick="GoLogin" style="padding:8px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
+                Выбрать пользователя
+            </button>
+        </div>
+    }
+    else
+    {
+        <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap;">
+            <a href="/production-days">Смены</a>
+            <a href="/reports/summary">Сводка</a>
+            <a href="/reports/pareto">Pareto</a>
+            @if (CanSeeDeviations)
+            {
+                <a href="/deviations">Отклонения</a>
+            }
+        </div>
+
+        @if (CanSeeDeviations)
+        {
+            <div style="padding:12px; border:1px solid #ddd; border-radius:8px; margin-top:14px;">
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <div style="font-weight:700;">Цепочка помощи: отклонения</div>
+
+                    @if (!string.IsNullOrWhiteSpace(DeviationError))
+                    {
+                        <span style="color:#b00;">@DeviationError</span>
+                    }
+                    else
+                    {
+                        <span>
+                            Активных: <b>@ActiveDeviationCount</b>
+                        </span>
+
+                        <span>
+                            L2 без ACK:
+                            <b style="@L2Style">@L2WithoutAckCount</b>
+                        </span>
+
+                        @if (L2WithoutAckCount > 0)
+                        {
+                            <span style="margin-left:6px; padding:2px 10px; border:1px solid #b00; border-radius:999px; color:#b00; font-weight:700;">
+                                Требуется реакция
+                            </span>
+                        }
+                    }
+
+                    <span style="margin-left:auto;"></span>
+
+                    <a href="/deviations" style="white-space:nowrap;">Открыть дашборд</a>
+                </div>
+
+                <div style="margin-top:8px; color:#666; font-size:13px;">
+                    Активные = Open + Ack. L2 без ACK = Open события, эскалированные на уровень 2.
+                </div>
+            </div>
+        }
+
+        @if (CurrentUser.Role == UserRole.Admin)
+        {
+            <div style="padding:12px; border:1px solid #ddd; border-radius:8px; margin-top:14px;">
+                <div style="font-weight:700; margin-bottom:10px;">Demo (Admin)</div>
+
+                @if (!string.IsNullOrWhiteSpace(DemoError))
+                {
+                    <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:10px;">
+                        @DemoError
+                        <div style="margin-top:8px;">
+                            <a href="/production-days">Перейти к списку смен</a>
+                        </div>
+                    </div>
+                }
+
+                <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:end;">
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <label>Дата</label>
+                        <InputDate TValue="DateTime" @bind-Value="DemoDateValue" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+                    </div>
+
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <label>WorkCenter</label>
+                        <select @bind="DemoWorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:240px;">
+                            @foreach (var wc in WorkCenters)
+                            {
+                                <option value="@wc.Id">@wc.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <label>Product</label>
+                        <select @bind="DemoProductIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:240px;">
+                            @foreach (var p in Products)
+                            {
+                                <option value="@p.Id">@p.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <button type="button" @onclick="CreateDemo300" style="padding:8px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
+                        Создать демо (takt=300)
+                    </button>
+
+                    <button type="button" @onclick="CreateDemo7200" style="padding:8px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
+                        Создать демо (takt=7200)
+                    </button>
+                </div>
+
+                <div style="margin-top:10px; color:#666; font-size:13px;">
+                    takt=300 → план 12 шт/час, takt=7200 → &lt;1 изделия/час (ступенчатый план по часам).
+                </div>
+            </div>
+        }
+    }
+</div>
 
 @code {
+    private List<WorkCenterDto> WorkCenters { get; set; } = new();
+    private List<ProductDto> Products { get; set; } = new();
+
+    private DateTime DemoDateValue { get; set; } = DateTime.Today;
+    private string? DemoWorkCenterIdText { get; set; }
+    private string? DemoProductIdText { get; set; }
+    private string? DemoError { get; set; }
+
+    private int ActiveDeviationCount { get; set; }
+    private int L2WithoutAckCount { get; set; }
+    private string? DeviationError { get; set; }
+
+    private Timer? _timer;
+    private int _tickInProgress;
+
+    private bool CanSeeDeviations =>
+        CurrentUser.IsSet && (CurrentUser.Role == UserRole.Master || CurrentUser.Role == UserRole.Manager || CurrentUser.Role == UserRole.Admin);
+
+    private string L2Style => L2WithoutAckCount > 0 ? "color:#b00; font-weight:700;" : "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        CurrentUser.Changed += OnChanged;
+
+        await EnsureAdminLookupsAsync();
+        await RefreshDeviationCountsAsync();
+        EnsureTimer();
+    }
+
+    private async void OnChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            await EnsureAdminLookupsAsync();
+            await RefreshDeviationCountsAsync();
+            EnsureTimer();
+            StateHasChanged();
+        });
+    }
+
+    private async Task EnsureAdminLookupsAsync()
+    {
+        if (CurrentUser.IsSet && CurrentUser.Role == UserRole.Admin)
+        {
+            WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
+            Products = (await Lookups.GetProductsAsync()).ToList();
+
+            if (WorkCenters.Count > 0)
+                DemoWorkCenterIdText = WorkCenters[0].Id.ToString();
+
+            if (Products.Count > 0)
+                DemoProductIdText = Products[0].Id.ToString();
+        }
+        else
+        {
+            WorkCenters = new();
+            Products = new();
+            DemoWorkCenterIdText = null;
+            DemoProductIdText = null;
+            DemoError = null;
+        }
+    }
+
+    private void EnsureTimer()
+    {
+        if (!CanSeeDeviations)
+        {
+            StopTimer();
+            ActiveDeviationCount = 0;
+            L2WithoutAckCount = 0;
+            DeviationError = null;
+            return;
+        }
+
+        if (_timer != null)
+            return;
+
+        _timer = new Timer(_ =>
+        {
+            _ = InvokeAsync(async () =>
+            {
+                if (!CanSeeDeviations)
+                    return;
+
+                if (Interlocked.Exchange(ref _tickInProgress, 1) == 1)
+                    return;
+
+                try
+                {
+                    await RefreshDeviationCountsAsync();
+                    StateHasChanged();
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _tickInProgress, 0);
+                }
+            });
+        }, null, TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(20));
+    }
+
+    private void StopTimer()
+    {
+        var t = _timer;
+        _timer = null;
+        if (t != null)
+            t.Dispose();
+        Interlocked.Exchange(ref _tickInProgress, 0);
+    }
+
+    private async Task RefreshDeviationCountsAsync()
+    {
+        DeviationError = null;
+
+        if (!CanSeeDeviations)
+        {
+            ActiveDeviationCount = 0;
+            L2WithoutAckCount = 0;
+            return;
+        }
+
+        try
+        {
+            var list = (await Deviations.ListAsync(null, null, false)).ToList();
+
+            ActiveDeviationCount = list.Count(x => x.Status != DeviationEventStatus.Closed);
+            L2WithoutAckCount = list.Count(x => x.Status == DeviationEventStatus.Open && x.CurrentEscalationLevel >= 2);
+        }
+        catch (Exception ex)
+        {
+            ActiveDeviationCount = 0;
+            L2WithoutAckCount = 0;
+            DeviationError = ex.Message;
+        }
+    }
+
     private void GoLogin()
     {
         Nav.NavigateTo("/auth/user");
+    }
+
+    private async Task CreateDemo300()
+    {
+        await CreateDemoAsync(300);
+    }
+
+    private async Task CreateDemo7200()
+    {
+        await CreateDemoAsync(7200);
+    }
+
+    private async Task CreateDemoAsync(int taktSec)
+    {
+        DemoError = null;
+
+        try
+        {
+            if (!CurrentUser.IsSet)
+                throw new InvalidOperationException("User not selected.");
+
+            if (CurrentUser.Role != UserRole.Admin)
+                throw new InvalidOperationException("Access denied.");
+
+            if (string.IsNullOrWhiteSpace(DemoWorkCenterIdText) || !Guid.TryParse(DemoWorkCenterIdText, out var wcId))
+                throw new InvalidOperationException("WorkCenter not selected.");
+
+            if (string.IsNullOrWhiteSpace(DemoProductIdText) || !Guid.TryParse(DemoProductIdText, out var pId))
+                throw new InvalidOperationException("Product not selected.");
+
+            var req = new CreateProductionDayRequestDto(DateOnly.FromDateTime(DemoDateValue), wcId, pId, taktSec);
+            var id = await ProductionDays.CreateAsync(req, CurrentUser.UserId!.Value);
+            Nav.NavigateTo($"/production-days/{id}");
+        }
+        catch (Exception ex)
+        {
+            DemoError = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        CurrentUser.Changed -= OnChanged;
+        StopTimer();
     }
 }

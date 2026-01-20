@@ -1,4 +1,5 @@
 ﻿@page "/production-days/create"
+@using Microsoft.AspNetCore.WebUtilities
 @inject ILookupService Lookups
 @inject IProductionDayService ProductionDays
 @inject CurrentUserService CurrentUser
@@ -22,15 +23,15 @@ else
         </div>
     }
 
-    <div style="display:flex; flex-direction:column; gap:12px; max-width:520px;">
+    <div style="display:flex; flex-direction:column; gap:12px; max-width:720px;">
         <div style="display:flex; flex-direction:column; gap:6px;">
             <label>Дата</label>
-            <InputDate TValue="DateTime" @bind-Value="DateValue" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+            <InputDate TValue="DateTime" @bind-Value="DateValue" disabled="@LockDate" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
         </div>
 
         <div style="display:flex; flex-direction:column; gap:6px;">
             <label>WorkCenter</label>
-            <select @bind="WorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;">
+            <select @bind="WorkCenterIdText" disabled="@LockWorkCenter" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;">
                 <option value="">-- выбери --</option>
                 @foreach (var wc in WorkCenters)
                 {
@@ -53,6 +54,56 @@ else
         <div style="display:flex; flex-direction:column; gap:6px;">
             <label>Takt (сек/шт)</label>
             <input type="number" @bind="TaktSec" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+            <div style="color:#666;">Диапазон: 1..86400</div>
+        </div>
+
+        <div style="padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
+            <div style="display:flex; gap:10px; align-items:center;">
+                <input type="checkbox" @bind="UseManualPlan" />
+                <div style="font-weight:700;">Ручной план по часам (Manual plan)</div>
+            </div>
+
+            @if (UseManualPlan)
+            {
+                <div style="margin-top:10px; overflow:auto;">
+                    <table style="width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr style="background:#f6f6f6;">
+                                <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Час</th>
+                                <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">PlanQty</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (var i = 0; i < 8; i++)
+                            {
+                                <tr>
+                                    <td style="padding:10px; border-bottom:1px solid #eee;">@HourLabel(i)</td>
+                                    <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
+                                        <input type="number" min="0" @bind="ManualPlan[i]" style="width:140px; padding:6px 8px; border:1px solid #aaa; border-radius:6px; text-align:right;" />
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="margin-top:10px; display:flex; gap:16px; flex-wrap:wrap;">
+                    <div><b>PlanShift:</b> @ManualPlan.Sum()</div>
+                    <div><b>Avg plan/h:</b> @((ManualPlan.Sum() / 8.0).ToString("0.##"))</div>
+                    <button type="button" @onclick="FillManualFromTakt" style="padding:6px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
+                        Заполнить из такта
+                    </button>
+                    <button type="button" @onclick="ClearManualPlan" style="padding:6px 10px; border:1px solid #aaa; border-radius:8px; background:#fff;">
+                        Очистить
+                    </button>
+                </div>
+            }
+            else
+            {
+                <div style="margin-top:8px; color:#666;">
+                    План будет рассчитан автоматически по такту (поддерживает &lt; 1 изделия/час через распределение по часу).
+                </div>
+            }
         </div>
 
         <div style="display:flex; gap:10px;">
@@ -75,12 +126,109 @@ else
     private string? ProductIdText { get; set; }
     private int TaktSec { get; set; } = 45;
 
+    private int[] ManualPlan { get; set; } = new int[8];
+
+    private bool _useManualPlan;
+    private bool UseManualPlan
+    {
+        get => _useManualPlan;
+        set
+        {
+            if (_useManualPlan == value)
+                return;
+
+            _useManualPlan = value;
+
+            if (_useManualPlan && ManualPlan.All(x => x == 0))
+                FillManualFromTakt();
+        }
+    }
+
+    private bool LockDate { get; set; }
+    private bool LockWorkCenter { get; set; }
+
     private string? Error { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
         WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
         Products = (await Lookups.GetProductsAsync()).ToList();
+
+        ApplyQueryPrefill();
+    }
+
+    private void ApplyQueryPrefill()
+    {
+        var uri = new Uri(Nav.Uri);
+        var q = QueryHelpers.ParseQuery(uri.Query);
+
+        if (q.TryGetValue("date", out var dateText))
+        {
+            if (DateOnly.TryParseExact(dateText.ToString(), "yyyy-MM-dd", out var d))
+            {
+                DateValue = d.ToDateTime(new TimeOnly(0, 0));
+                LockDate = true;
+            }
+        }
+
+        if (q.TryGetValue("workCenterId", out var wcText))
+        {
+            if (Guid.TryParse(wcText.ToString(), out var wcId))
+            {
+                WorkCenterIdText = wcId.ToString();
+                LockWorkCenter = true;
+            }
+        }
+    }
+
+    private void FillManualFromTakt()
+    {
+        Error = null;
+
+        if (TaktSec < 1 || TaktSec > 86400)
+        {
+            Error = "Takt должен быть в диапазоне 1..86400.";
+            StateHasChanged();
+            return;
+        }
+
+        var plan = CalculateCumulativeHourlyPlan(TaktSec, 8);
+        for (var i = 0; i < 8; i++)
+            ManualPlan[i] = plan[i];
+
+        StateHasChanged();
+    }
+
+    private void ClearManualPlan()
+    {
+        Error = null;
+
+        for (var i = 0; i < 8; i++)
+            ManualPlan[i] = 0;
+
+        StateHasChanged();
+    }
+
+    private static int[] CalculateCumulativeHourlyPlan(int taktSec, int hours)
+    {
+        var plan = new int[hours];
+
+        var prevCum = 0;
+        for (var i = 0; i < hours; i++)
+        {
+            var endSeconds = (i + 1) * 3600;
+            var cum = endSeconds / taktSec;
+            plan[i] = Math.Max(0, cum - prevCum);
+            prevCum = cum;
+        }
+
+        return plan;
+    }
+
+    private static string HourLabel(int hourIndex)
+    {
+        var start = new TimeOnly(8, 0).AddHours(hourIndex);
+        return $"{start:HH\\:mm}–{start.AddHours(1):HH\\:mm}";
     }
 
     private void GoLogin()
@@ -92,6 +240,13 @@ else
 
     private void Cancel()
     {
+        if (LockDate && LockWorkCenter && Guid.TryParse(WorkCenterIdText, out var wcId))
+        {
+            var dateText = DateOnly.FromDateTime(DateValue).ToString("yyyy-MM-dd");
+            Nav.NavigateTo($"/shifts/{Uri.EscapeDataString(dateText)}/{wcId}");
+            return;
+        }
+
         Nav.NavigateTo("/production-days");
     }
 
@@ -111,15 +266,33 @@ else
             return;
         }
 
-        if (TaktSec < 1 || TaktSec > 3600)
+        if (TaktSec < 1 || TaktSec > 86400)
         {
-            Error = "Takt должен быть в диапазоне 1..3600.";
+            Error = "Takt должен быть в диапазоне 1..86400.";
             return;
+        }
+
+        int[]? hourlyPlan = null;
+        if (UseManualPlan)
+        {
+            if (ManualPlan.Length != 8)
+            {
+                Error = "Manual plan must have 8 values.";
+                return;
+            }
+
+            if (ManualPlan.Any(x => x < 0))
+            {
+                Error = "Manual plan values cannot be negative.";
+                return;
+            }
+
+            hourlyPlan = ManualPlan.ToArray();
         }
 
         try
         {
-            var req = new CreateProductionDayRequestDto(DateOnly.FromDateTime(DateValue), wcId, pId, TaktSec);
+            var req = new CreateProductionDayRequestDto(DateOnly.FromDateTime(DateValue), wcId, pId, TaktSec, hourlyPlan);
             var id = await ProductionDays.CreateAsync(req, CurrentUser.UserId!.Value);
             Nav.NavigateTo($"/production-days/{id}");
         }

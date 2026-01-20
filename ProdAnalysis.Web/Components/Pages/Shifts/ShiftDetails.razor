@@ -1,0 +1,163 @@
+﻿@page "/shifts/{DateText}/{WorkCenterId:guid}"
+@page "/shifts/{WorkCenterId:guid}/{DateText}"
+@using ProdAnalysis.Application.Dtos.Lookups
+@using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Domain.Enums
+@using ProdAnalysis.Web.Services
+
+@inject ILookupService Lookups
+@inject IProductionDayService ProductionDays
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>Смена (группа): @DateText</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Выбери пользователя.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Перейти</button>
+    </div>
+}
+else if (!string.IsNullOrWhiteSpace(Error))
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        @Error
+    </div>
+}
+else if (IsLoading)
+{
+    <div>Загрузка...</div>
+}
+else
+{
+    <div style="margin-bottom:12px; padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
+        <div style="font-weight:700;">WorkCenter: @WorkCenterName</div>
+        <div style="margin-top:6px; display:flex; gap:14px; flex-wrap:wrap;">
+            <div><b>Номенклатур:</b> @Items.Count</div>
+            <div><b>Plan:</b> @TotalPlan</div>
+            <div><b>Dev:</b> <span style="@DevStyle">@TotalDev</span></div>
+        </div>
+
+        @if (CurrentUser.Role == UserRole.Operator || CurrentUser.Role == UserRole.Admin)
+        {
+            <div style="margin-top:10px;">
+                <button type="button" @onclick="AddProduct" style="padding:8px 10px; border:1px solid #333; border-radius:8px; background:#fff;">
+                    Добавить номенклатуру в смену
+                </button>
+            </div>
+        }
+    </div>
+
+    @if (Items.Count == 0)
+    {
+        <div>Нет номенклатур в этой смене.</div>
+    }
+    else
+    {
+        <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f6f6f6;">
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Product</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">TaktSec</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Avg plan/h</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">PlanShift</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Dev</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Status</th>
+                        <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var it in Items)
+                    {
+                        var devStyle = it.CumDeviationNow < 0 ? "color:#b00; font-weight:700;" : "";
+
+                        <tr>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.ProductName</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.TaktSec</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.AvgPlanPerHour.ToString("0.##")</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@it.PlanShift</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@it.CumDeviationNow</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@it.Status</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">
+                                <a href="/production-days/@it.Id">Открыть</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <div style="margin-top:14px;">
+        <a href="/shifts">Назад к списку групп</a>
+        <span style="margin-left:10px;"></span>
+        <a href="/production-days">Список смен</a>
+    </div>
+}
+
+@code {
+    [Parameter] public string DateText { get; set; } = "";
+    [Parameter] public Guid WorkCenterId { get; set; }
+
+    private bool IsLoading { get; set; } = true;
+    private string? Error { get; set; }
+
+    private string WorkCenterName { get; set; } = "";
+    private List<ProductionDayListItemDto> Items { get; set; } = new();
+
+    private int TotalPlan { get; set; }
+    private int TotalDev { get; set; }
+
+    private string DevStyle => TotalDev < 0 ? "color:#b00; font-weight:700;" : "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    private void GoLogin()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+        var target = string.IsNullOrWhiteSpace(rel) ? "/" : "/" + rel;
+        Nav.NavigateTo($"/auth/user?returnUrl={Uri.EscapeDataString(target)}");
+    }
+
+    private async Task LoadAsync()
+    {
+        Error = null;
+        IsLoading = true;
+
+        try
+        {
+            if (!DateOnly.TryParseExact(DateText, "yyyy-MM-dd", out var date))
+                throw new InvalidOperationException("Invalid date in route. Expected yyyy-MM-dd.");
+
+            var wcs = await Lookups.GetWorkCentersAsync();
+            var wc = wcs.FirstOrDefault(x => x.Id == WorkCenterId);
+            WorkCenterName = wc?.Name ?? WorkCenterId.ToString();
+
+            Items = (await ProductionDays.ListAsync(date, WorkCenterId, null))
+                .OrderBy(x => x.ProductName)
+                .ToList();
+
+            TotalPlan = Items.Sum(x => x.PlanShift);
+            TotalDev = Items.Sum(x => x.CumDeviationNow);
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void AddProduct()
+    {
+        var url = $"/production-days/create?date={Uri.EscapeDataString(DateText)}&workCenterId={Uri.EscapeDataString(WorkCenterId.ToString())}";
+        Nav.NavigateTo(url);
+    }
+}

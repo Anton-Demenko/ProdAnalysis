@@ -1,6 +1,7 @@
 ﻿@using ProdAnalysis.Application.Dtos.Hourly
 @using ProdAnalysis.Application.Dtos.ProductionDays
 @using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Domain.Enums
 @using ProdAnalysis.Web.Services
 
 @inject IHourlyRecordService HourlyRecords
@@ -14,9 +15,16 @@
 else
 {
     var productionDayId = TryGetProductionDayId(Details);
+    var isReadOnly = Details.Status == ProductionDayStatus.Closed;
 
     <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin-bottom:10px;">
-        <div style="font-weight:700;">Hourly input</div>
+        <div style="font-weight:700;">
+            Hourly input
+            @if (isReadOnly)
+            {
+                <span style="margin-left:10px; padding:2px 8px; border:1px solid #999; border-radius:999px; color:#444;">READ ONLY</span>
+            }
+        </div>
 
         <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
             @if (productionDayId.HasValue)
@@ -63,21 +71,39 @@ else
                         <td style="padding:10px; border-bottom:1px solid #eee;">
                             @r.HourStart.ToString("HH:mm") - @r.HourStart.AddHours(1).ToString("HH:mm")
                         </td>
-                        <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@r.PlanQty</td>
+
                         <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
-                            <input type="number" @bind="edit.ActualText" style="width:100px; padding:6px 8px; border:1px solid #aaa; border-radius:6px; text-align:right;" />
+                            @if (isReadOnly)
+                            {
+                                @r.PlanQty
+                            }
+                            else
+                            {
+                                <input type="number" @bind="edit.PlanText" style="width:100px; padding:6px 8px; border:1px solid #aaa; border-radius:6px; text-align:right;" />
+                            }
                         </td>
+
+                        <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
+                            <input type="number" @bind="edit.ActualText" disabled="@isReadOnly" style="width:100px; padding:6px 8px; border:1px solid #aaa; border-radius:6px; text-align:right;" />
+                        </td>
+
                         <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @dtStyle">
                             @r.DowntimeMinutes
                         </td>
+
                         <td style="padding:10px; border-bottom:1px solid #eee;">
-                            <input type="text" @bind="edit.Comment" style="width:100%; min-width:220px; padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+                            <input type="text" @bind="edit.Comment" disabled="@isReadOnly" style="width:100%; min-width:220px; padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
                         </td>
+
                         <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@r.CumDeviationAfterThisHour</td>
+
                         <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">
-                            <button type="button" @onclick="() => SaveActual(r.Id)" style="padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;">
-                                Save
-                            </button>
+                            @if (!isReadOnly)
+                            {
+                                <button type="button" @onclick="() => SaveRow(r)" style="padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;">
+                                    Save
+                                </button>
+                            }
                             <button type="button" @onclick="() => ToggleDowntime(r.Id)" style="margin-left:6px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;">
                                 Downtimes
                             </button>
@@ -88,7 +114,7 @@ else
                     {
                         <tr>
                             <td colspan="7" style="padding:10px; border-bottom:1px solid #eee;">
-                                <DowntimeEditor HourlyRecordId="r.Id" OnSaved="HandleDowntimeSaved" OnClosed="HandleDowntimeClosed" />
+                                <DowntimeEditor HourlyRecordId="r.Id" IsReadOnly="isReadOnly" OnSaved="HandleDowntimeSaved" OnClosed="HandleDowntimeClosed" />
                             </td>
                         </tr>
                     }
@@ -115,6 +141,7 @@ else
 
     private sealed class RowEdit
     {
+        public string? PlanText { get; set; }
         public string? ActualText { get; set; }
         public string? Comment { get; set; }
     }
@@ -128,6 +155,7 @@ else
 
         s = new RowEdit
         {
+            PlanText = r.PlanQty.ToString(),
             ActualText = (r.ActualQty ?? 0).ToString(),
             Comment = r.Comment
         };
@@ -155,9 +183,15 @@ else
         return Task.CompletedTask;
     }
 
-    private async Task SaveActual(Guid hourlyRecordId)
+    private async Task SaveRow(HourlyRecordDto r)
     {
         Error = null;
+
+        if (Details != null && Details.Status == ProductionDayStatus.Closed)
+        {
+            Error = "ProductionDay is closed. Editing is not allowed.";
+            return;
+        }
 
         if (!CurrentUser.IsSet)
         {
@@ -165,9 +199,15 @@ else
             return;
         }
 
-        if (!_state.TryGetValue(hourlyRecordId, out var s))
+        if (!_state.TryGetValue(r.Id, out var s))
         {
             Error = "Row state not found.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(s.PlanText) || !int.TryParse(s.PlanText, out var plan) || plan < 0)
+        {
+            Error = "Plan must be a non-negative number.";
             return;
         }
 
@@ -187,10 +227,22 @@ else
             actual = v;
         }
 
+        var comment = string.IsNullOrWhiteSpace(s.Comment) ? null : s.Comment.Trim();
+
         try
         {
-            var req = new UpdateHourlyActualRequestDto(hourlyRecordId, actual, s.Comment);
-            await HourlyRecords.UpdateActualAsync(req, CurrentUser.UserId!.Value);
+            if (plan != r.PlanQty)
+                await HourlyRecords.UpdatePlanAsync(new UpdateHourlyPlanRequestDto(r.Id, plan), CurrentUser.UserId!.Value);
+
+            var currentActual = r.ActualQty ?? 0;
+            var newActual = actual ?? 0;
+            var actualChanged = currentActual != newActual;
+            var commentChanged = (r.Comment ?? null) != comment;
+
+            if (actualChanged || commentChanged)
+                await HourlyRecords.UpdateActualAsync(new UpdateHourlyActualRequestDto(r.Id, actual, comment), CurrentUser.UserId!.Value);
+
+            _state.Remove(r.Id);
             await OnSaved.InvokeAsync();
         }
         catch (Exception ex)

@@ -10,5 +10,7 @@ public sealed record ProductionDayListItemDto(
     int TaktSec,
     int PlanPerHour,
     ProductionDayStatus Status,
-    int CumDeviationNow
+    int CumDeviationNow,
+    int PlanShift,
+    double AvgPlanPerHour
 );

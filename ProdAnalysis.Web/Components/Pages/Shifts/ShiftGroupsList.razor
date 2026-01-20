@@ -1,0 +1,204 @@
+﻿@page "/shifts"
+
+@using ProdAnalysis.Application.Dtos.Lookups
+@using ProdAnalysis.Application.Dtos.ProductionDays
+@using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Domain.Enums
+@using ProdAnalysis.Web.Services
+
+@inject ILookupService Lookups
+@inject IProductionDayService ProductionDays
+@inject CurrentUserService CurrentUser
+@inject NavigationManager Nav
+
+<h3>Мульти-смена (участок + дата)</h3>
+
+@if (!CurrentUser.IsSet)
+{
+    <div style="padding:10px; border:1px solid #c33; border-radius:8px;">
+        Выбери пользователя.
+        <button type="button" style="margin-left:10px; padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff;" @onclick="GoLogin">Перейти</button>
+    </div>
+}
+else
+{
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-bottom:14px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>Дата</label>
+            <InputDate TValue="DateTime" @bind-Value="Date" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px;" />
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:6px;">
+            <label>WorkCenter</label>
+            <select @bind="WorkCenterIdText" style="padding:6px 8px; border:1px solid #aaa; border-radius:6px; min-width:260px;">
+                <option value="">Все</option>
+                @foreach (var wc in WorkCenters)
+                {
+                    <option value="@wc.Id">@wc.Name</option>
+                }
+            </select>
+        </div>
+
+        <button type="button" @onclick="Load" style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+            Обновить
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <div style="padding:10px; border:1px solid #c33; border-radius:8px; margin-bottom:12px;">
+            @Error
+        </div>
+    }
+
+    @if (Groups.Count == 0)
+    {
+        <div>Нет данных по выбранным фильтрам.</div>
+    }
+    else
+    {
+        <div style="overflow:auto; border:1px solid #ddd; border-radius:8px;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f6f6f6;">
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Дата</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">WorkCenter</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Products</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Plan</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Actual</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Dev</th>
+                        <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Completion %</th>
+                        <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Status</th>
+                        <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var g in Groups)
+                    {
+                        var devStyle = g.Deviation < 0 ? "color:#b00; font-weight:700;" : "";
+                        <tr>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@g.Date.ToString("yyyy-MM-dd")</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@g.WorkCenterName</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@g.ProductsCount</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@g.Plan</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@g.Actual</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; @devStyle">@g.Deviation</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">@g.CompletionPct.ToString("0.##")</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">@g.Status</td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">
+                                @if (g.WorkCenterId.HasValue)
+                                {
+                                    <a href="/shifts/@g.Date.ToString("yyyy-MM-dd")/@g.WorkCenterId.Value">Открыть</a>
+                                }
+                                else
+                                {
+                                    <span style="color:#999;">—</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    private sealed record ShiftGroupRow(
+        DateOnly Date,
+        Guid? WorkCenterId,
+        string WorkCenterName,
+        int ProductsCount,
+        int Plan,
+        int Actual,
+        int Deviation,
+        double CompletionPct,
+        string Status
+    );
+
+    private List<WorkCenterDto> WorkCenters { get; set; } = new();
+    private List<ShiftGroupRow> Groups { get; set; } = new();
+
+    private string? Error { get; set; }
+
+    private DateTime Date { get; set; } = DateTime.Today;
+    private string? WorkCenterIdText { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        WorkCenters = (await Lookups.GetWorkCentersAsync()).ToList();
+        await LoadAsync();
+    }
+
+    private void GoLogin()
+    {
+        var rel = Nav.ToBaseRelativePath(Nav.Uri);
+        var target = string.IsNullOrWhiteSpace(rel) ? "/" : "/" + rel;
+        Nav.NavigateTo($"/auth/user?returnUrl={Uri.EscapeDataString(target)}");
+    }
+
+    private void Load()
+    {
+        _ = LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        Error = null;
+        Groups = new();
+
+        try
+        {
+            var dateOnly = DateOnly.FromDateTime(Date);
+
+            Guid? wcId = null;
+            if (!string.IsNullOrWhiteSpace(WorkCenterIdText) && Guid.TryParse(WorkCenterIdText, out var wc))
+                wcId = wc;
+
+            var items = await ProductionDays.ListAsync(dateOnly, wcId, null);
+
+            var wcByName = WorkCenters
+                .GroupBy(x => x.Name)
+                .ToDictionary(g => g.Key, g => g.First().Id);
+
+            var grouped = items
+                .GroupBy(x => new { x.Date, x.WorkCenterName })
+                .OrderBy(g => g.Key.Date)
+                .ThenBy(g => g.Key.WorkCenterName)
+                .ToList();
+
+            foreach (var g in grouped)
+            {
+                wcByName.TryGetValue(g.Key.WorkCenterName, out var resolvedId);
+                var wcResolved = resolvedId == Guid.Empty ? (Guid?)null : resolvedId;
+
+                var productsCount = g.Count();
+                var plan = g.Sum(x => x.PlanShift);
+                var dev = g.Sum(x => x.CumDeviationNow);
+                var actual = plan + dev;
+                var completion = plan <= 0 ? 0d : (double)actual * 100d / plan;
+
+                var allClosed = g.All(x => x.Status == ProductionDayStatus.Closed);
+                var status = allClosed ? "Closed" : "Active";
+
+                Groups.Add(new ShiftGroupRow(
+                    g.Key.Date,
+                    wcResolved,
+                    g.Key.WorkCenterName,
+                    productsCount,
+                    plan,
+                    actual,
+                    dev,
+                    completion,
+                    status
+                ));
+            }
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+}

@@ -27,6 +27,9 @@ public sealed class HourlyRecordService : IHourlyRecordService
         if (hr == null)
             throw new InvalidOperationException("HourlyRecord not found.");
 
+        if (hr.ProductionDay.Status == ProductionDayStatus.Closed)
+            throw new InvalidOperationException("ProductionDay is closed. Editing is not allowed.");
+
         if (request.ActualQty.HasValue && request.ActualQty.Value < 0)
             throw new InvalidOperationException("Actual cannot be negative.");
 
@@ -41,6 +44,44 @@ public sealed class HourlyRecordService : IHourlyRecordService
         hr.UpdatedByUserId = userId;
 
         await UpsertDeviationEventAsync(db, hr, userId);
+
+        await db.SaveChangesAsync();
+        return changed;
+    }
+
+    public async Task<bool> UpdatePlanAsync(UpdateHourlyPlanRequestDto request, Guid userId)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var hr = await db.HourlyRecords
+            .Include(x => x.ProductionDay)
+            .FirstOrDefaultAsync(x => x.Id == request.HourlyRecordId);
+
+        if (hr == null)
+            throw new InvalidOperationException("HourlyRecord not found.");
+
+        if (hr.ProductionDay.Status == ProductionDayStatus.Closed)
+            throw new InvalidOperationException("ProductionDay is closed. Editing is not allowed.");
+
+        if (request.PlanQty < 0)
+            throw new InvalidOperationException("PlanQty cannot be negative.");
+
+        var changed = hr.PlanQty != request.PlanQty;
+
+        hr.PlanQty = request.PlanQty;
+        hr.UpdatedAt = DateTime.UtcNow;
+        hr.UpdatedByUserId = userId;
+
+        await UpsertDeviationEventAsync(db, hr, userId);
+
+        var hours = await db.HourlyRecords
+            .Where(x => x.ProductionDayId == hr.ProductionDayId)
+            .ToListAsync();
+
+        var planShift = hours.Sum(x => x.PlanQty);
+        var planPerHour = (int)Math.Round(planShift / 8.0);
+
+        hr.ProductionDay.PlanPerHour = planPerHour;
 
         await db.SaveChangesAsync();
         return changed;

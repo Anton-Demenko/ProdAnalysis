@@ -5,4 +5,5 @@ namespace ProdAnalysis.Application.Services.Interfaces;
 public interface IHourlyRecordService
 {
     Task<bool> UpdateActualAsync(UpdateHourlyActualRequestDto request, Guid userId);
+    Task<bool> UpdatePlanAsync(UpdateHourlyPlanRequestDto request, Guid userId);
 }

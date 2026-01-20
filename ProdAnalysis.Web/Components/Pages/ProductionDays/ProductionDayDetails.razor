@@ -1,5 +1,9 @@
 ﻿@page "/production-days/{Id:guid}"
+@using ProdAnalysis.Domain.Enums
+@using ProdAnalysis.Application.Services.Interfaces
+@using ProdAnalysis.Application.Dtos.Hourly
 @inject IProductionDayService ProductionDays
+@inject IHourlyRecordService HourlyRecords
 @inject CurrentUserService CurrentUser
 @inject NavigationManager Nav
 
@@ -24,7 +28,10 @@ else if (Details == null)
 }
 else
 {
-    <div style="display:flex; flex-wrap:wrap; gap:14px; margin-bottom:14px;">
+    var isClosed = Details.Status == ProductionDayStatus.Closed;
+    var canEditPlan = (CurrentUser.Role == UserRole.Operator || CurrentUser.Role == UserRole.Admin);
+
+    <div style="display:flex; flex-wrap:wrap; gap:14px; margin-bottom:14px; align-items:flex-end;">
         <div style="padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
             <div style="font-weight:700;">Дата</div>
             <div>@Details.Date.ToString("yyyy-MM-dd")</div>
@@ -49,6 +56,27 @@ else
             <div style="font-weight:700;">Plan/hour</div>
             <div>@Details.PlanPerHour</div>
         </div>
+        <div style="padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
+            <div style="font-weight:700;">Status</div>
+            <div>@Details.Status</div>
+        </div>
+
+        <div style="display:flex; gap:8px; margin-left:auto;">
+            @if (!isClosed)
+            {
+                <button type="button" @onclick="CloseShift"
+                        style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+                    Close shift
+                </button>
+            }
+            else
+            {
+                <button type="button" @onclick="ReopenShift"
+                        style="padding:8px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+                    Reopen
+                </button>
+            }
+        </div>
     </div>
 
     <div style="margin-bottom:12px; padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
@@ -59,6 +87,65 @@ else
     </div>
 
     <HourlyInputTable Details="Details" OnSaved="Reload" />
+
+    <div style="margin-top:14px; padding:12px; border:1px solid #ddd; border-radius:8px;">
+        <div style="font-weight:700; margin-bottom:8px;">Manual plan (по часам)</div>
+
+        @if (!canEditPlan)
+        {
+            <div style="color:#666;">Недостаточно прав для редактирования плана.</div>
+        }
+        else if (isClosed)
+        {
+            <div style="color:#666;">Смена закрыта. Редактирование плана запрещено.</div>
+        }
+        else
+        {
+            <div style="overflow:auto;">
+                <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#f6f6f6;">
+                            <th style="text-align:left; padding:10px; border-bottom:1px solid #ddd;">Hour</th>
+                            <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">Current plan</th>
+                            <th style="text-align:right; padding:10px; border-bottom:1px solid #ddd;">New plan</th>
+                            <th style="padding:10px; border-bottom:1px solid #ddd;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var hr in Details.HourlyRecords.OrderBy(x => x.HourIndex))
+                        {
+                            <tr>
+                                <td style="padding:10px; border-bottom:1px solid #eee;">
+                                    @hr.HourStart.ToString("HH:mm")
+                                </td>
+                                <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
+                                    @hr.PlanQty
+                                </td>
+                                <td style="padding:10px; border-bottom:1px solid #eee; text-align:right;">
+                                    <input type="number"
+                                           value="@GetPlanDraft(hr.Id)"
+                                           @onchange="e => SetPlanDraft(hr.Id, e.Value)"
+                                           style="width:110px; padding:6px 8px; border:1px solid #aaa; border-radius:6px; text-align:right;" />
+                                </td>
+                                <td style="padding:10px; border-bottom:1px solid #eee; text-align:right; white-space:nowrap;">
+                                    <button type="button"
+                                            @onclick="() => SavePlan(hr.Id)"
+                                            disabled="@(SavingPlanForId == hr.Id)"
+                                            style="padding:7px 12px; border:1px solid #333; border-radius:8px; background:#fff;">
+                                        Save plan
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="margin-top:10px; color:#666; font-size:13px;">
+                Изменение плана пересчитает отклонения: событие создаётся только когда Actual &lt; Plan. Если Plan=0 — отклонения по этому часу не будет.
+            </div>
+        }
+    </div>
 
     <div style="margin-top:14px;">
         <a href="/production-days">Назад к списку</a>
@@ -71,6 +158,9 @@ else
     private ProductionDayDetailsDto? Details { get; set; }
     private string? Error { get; set; }
 
+    private Dictionary<Guid, int> PlanDraft { get; set; } = new();
+    private Guid? SavingPlanForId { get; set; }
+
     protected override async Task OnParametersSetAsync()
     {
         await Reload();
@@ -81,6 +171,96 @@ else
         Nav.NavigateTo("/auth/user");
     }
 
+    private async Task CloseShift()
+    {
+        Error = null;
+
+        try
+        {
+            if (!CurrentUser.IsSet)
+                throw new InvalidOperationException("User not selected.");
+
+            await ProductionDays.SetStatusAsync(Id, ProductionDayStatus.Closed);
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ReopenShift()
+    {
+        Error = null;
+
+        try
+        {
+            if (!CurrentUser.IsSet)
+                throw new InvalidOperationException("User not selected.");
+
+            await ProductionDays.SetStatusAsync(Id, ProductionDayStatus.Active);
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private int GetPlanDraft(Guid hourlyRecordId)
+    {
+        if (PlanDraft.TryGetValue(hourlyRecordId, out var v))
+            return v;
+        return 0;
+    }
+
+    private void SetPlanDraft(Guid hourlyRecordId, object? value)
+    {
+        if (value == null)
+            return;
+
+        if (int.TryParse(value.ToString(), out var v))
+            PlanDraft[hourlyRecordId] = v;
+    }
+
+    private async Task SavePlan(Guid hourlyRecordId)
+    {
+        Error = null;
+
+        try
+        {
+            if (!CurrentUser.IsSet)
+                throw new InvalidOperationException("User not selected.");
+
+            if (CurrentUser.Role != UserRole.Operator && CurrentUser.Role != UserRole.Admin)
+                throw new InvalidOperationException("Access denied.");
+
+            if (Details == null)
+                throw new InvalidOperationException("ProductionDay not loaded.");
+
+            if (Details.Status == ProductionDayStatus.Closed)
+                throw new InvalidOperationException("ProductionDay is closed. Editing is not allowed.");
+
+            var plan = GetPlanDraft(hourlyRecordId);
+
+            SavingPlanForId = hourlyRecordId;
+            await HourlyRecords.UpdatePlanAsync(new UpdateHourlyPlanRequestDto(hourlyRecordId, plan), CurrentUser.UserId!.Value);
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+        finally
+        {
+            SavingPlanForId = null;
+        }
+
+        StateHasChanged();
+    }
+
     private async Task Reload()
     {
         Error = null;
@@ -89,7 +269,12 @@ else
         {
             Details = await ProductionDays.GetDetailsAsync(Id);
             if (Details == null)
+            {
                 Error = "Смена не найдена.";
+                return;
+            }
+
+            PlanDraft = Details.HourlyRecords.ToDictionary(x => x.Id, x => x.PlanQty);
         }
         catch (Exception ex)
         {
